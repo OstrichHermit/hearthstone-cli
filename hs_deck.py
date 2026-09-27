@@ -53,6 +53,7 @@ STANDARD_SETS = {
     "TIME_TRAVEL",             # 穿越时间流 2026上半年
     "CATACLYSM",               # 大地的裂变 2026上半年
     "ESCAPEFROM_VIOLET_HOLD",  # 逃离紫罗兰监狱 2026下半年
+    "BE",                      # 黑帝国古神系列 2026.9 (克苏恩/纯净圣母等4张传说)
 }
 
 # 特殊构筑规则卡 dbfId
@@ -648,7 +649,7 @@ def build_image_html(deck, lang):
     title = deck["deck_name"] if lang == "zh" else deck["deck_name_en"]
     hero = deck["hero_zh"] if lang == "zh" else deck["hero_en"]
     cls = deck["class_zh"] if lang == "zh" else deck["class_en"]
-    buckets = {i: 0 for i in range(1, 8)}
+    buckets = {i: 0 for i in range(0, 8)}
     for r in deck["cards"]:
         buckets[min(r["cost"], 7)] += r["count"]
     mx = max(buckets.values())
