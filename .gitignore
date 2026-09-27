@@ -1,0 +1,8 @@
+# Card database (auto-downloaded via `hs update`)
+cards_zh.json
+
+# Local deck library (personal data)
+decks/
+
+__pycache__/
+*.pyc
