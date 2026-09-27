@@ -15,7 +15,7 @@ Human deck builders are GUI simulators: drag cards, watch the mana curve. An age
 - **Sideboard / band 副牌库** — Band Manager's 3-card band, encoded as sideboard triplets. 乐队经理精英牛头人酋长的 3 张乐队，编码为 sideboard 三元组
 - **Multiclass & Tourist 多职业与游客机制** — respects `classes` arrays (e.g. Death Wing, Deathlord of the World shared by six classes) and the Perils in Paradise tourist rules: a Tourist unlocks only the destination class's cards *from that expansion*, one Tourist per deck, no nesting. 按 `classes` 数组识别多职业卡（如六职业共用的灭世者死亡之翼），并完整实现胜地历险记游客三条规则：游客仅解锁目的地职业的该扩展卡牌、每套限一名游客、不可嵌套
 - **Deck library & health checks 卡组库与版本体检** — save decks locally, then `hs check` after every patch to see exactly which cards rotated out. 卡组本地存档，版本更新后一键体检，退环境卡逐条列出
-- **Deck image 卡组长图** — render any deck (library name or raw code) to a share-ready PNG, Chinese or English: mana curve, rarity-colored card rows, class sigil, hero and deck code. Uses local headless Chrome/Edge. 一条命令把卡组渲染成可分享的卡组长图（中/英版各自独立）：法力曲线、稀有度配色、职业徽记、英雄与卡组代码，调用本地无头 Chrome/Edge 渲染
+- **Deck image 卡组长图** — render any deck (library name or raw code) to a share-ready PNG, Chinese or English: mana curve, rarity-colored card rows (one row per card by default, `--merge` to combine duplicates), class sigil, hero and deck code. Uses local headless Chrome/Edge. 一条命令把卡组渲染成可分享的卡组长图（中/英版各自独立）：法力曲线、稀有度配色（默认逐张列出，`--merge` 合并同名卡）、职业徽记、英雄与卡组代码，调用本地无头 Chrome/Edge 渲染
 - **Agent-friendly 对 Agent 友好** — plain-JSON input, itemized error output for precise self-correction, zero interactive prompts. 纯 JSON 输入、报错逐条列出便于自我修正、无任何交互式提示
 - **Local card database 本地双语卡牌库** — zhCN + enUS data from [HearthstoneJSON](https://hearthstonejson.com/), refreshed with one command on patch day. 中英双语卡牌数据源自 HearthstoneJSON，补丁日一条命令刷新
 
@@ -65,7 +65,12 @@ hs check
 hs image my-deck                          # by library name 按卡组库名字
 hs image AAECAQcGo6AE... --name=Turtle    # from a raw code 直接给代码
 hs image my-deck --lang=en                # English version 英文版 (--lang=both 一次出中英两版)
+hs image my-deck --merge                  # one row per distinct card 同名卡合并为一行
+hs image my-deck --name=龟甲防战 --name-en=Turtle Warrior
 ```
+
+Standard-format decks containing non-Standard cards are blocked by default; `--force` renders anyway.
+标准卡组含非标准池卡时默认拦截不出图，`--force` 可强制渲染。
 
 `deck.json` format | 输入格式:
 

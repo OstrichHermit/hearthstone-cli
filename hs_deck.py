@@ -10,8 +10,10 @@
   show <名字>                         查看存档卡组明细
   check [名字]                        体检存档卡组 (版本更新后查失效卡; 省略名字=全部)
   fetch <URL>                         抓取网页中的卡组代码 (打印, 不入库)
-  image <名字或代码> [--lang=zh|en|both] [--name=标题] [--out=路径.png]
+  image <名字或代码> [--lang=zh|en|both] [--name=标题] [--name-en=英文标题] [--force] [--merge] [--out=路径.png]
                                       生成卡组长图 PNG (本地 Chrome/Edge 无头渲染)
+                                      标准卡组含非标准池卡时拦截不出图 (--force 强制渲染)
+                                      默认同名卡不合并逐张列出, --merge 则合并同名卡
 
 deck.json 格式:
   {
@@ -587,6 +589,7 @@ RAR = {
     "EPIC":      {"c": "#c85aff"},
     "LEGENDARY": {"c": "#ffab00"},
 }
+RARITY_RANK = {"FREE": 0, "COMMON": 0, "RARE": 1, "EPIC": 2, "LEGENDARY": 3}
 CLASS_ICONS = {
     "Warrior": "⚔️", "Mage": "🔮", "Hunter": "🏹", "Warlock": "👁️",
     "Priest": "✨", "Rogue": "🗡️", "Paladin": "⚜️", "Shaman": "⚡",
@@ -638,8 +641,8 @@ def shot_html(chrome, html_path, png_path):
 
 def build_image_html(deck, lang):
     T = {
-        "zh": {"curve": "法力曲线", "std": deck["format_zh"], "cards": "卡牌", "dust": f"合成 {deck['dust']} 尘", "brand": "hs-deck-cli · 数据: HearthstoneJSON"},
-        "en": {"curve": "Mana Curve", "std": deck["format_en"], "cards": "Cards", "dust": f"{deck['dust']} Dust", "brand": "hs-deck-cli · Data: HearthstoneJSON"},
+        "zh": {"curve": "法力曲线", "std": deck["format_zh"], "cards": "卡牌", "dust": f"合成 {deck['dust']} 尘", "code_label": "卡组代码：", "brand": "hs-deck-cli · 数据: HearthstoneJSON"},
+        "en": {"curve": "Mana Curve", "std": deck["format_en"], "cards": "Cards", "dust": f"{deck['dust']} Dust", "code_label": "Deck Code: ", "brand": "hs-deck-cli · Data: HearthstoneJSON"},
     }[lang]
     title = deck["deck_name"] if lang == "zh" else deck["deck_name_en"]
     hero = deck["hero_zh"] if lang == "zh" else deck["hero_en"]
@@ -722,7 +725,7 @@ h1 {{ font-size:31px; color:#6e4410; letter-spacing:2px; line-height:1.18;
     radial-gradient(circle at 34% 10%, #a8d4ff 0%, #3f83d6 55%, #10365f 100%);
   box-shadow:0 1px 3px rgba(20,65,126,.35); min-height:6px; }}
 .bl {{ font-size:11px; color:#8a7452; }}
-.brand {{ margin-top:7px; text-align:center; font-size:10px; color:#a08c62; font-family:"Segoe UI",sans-serif; letter-spacing:.5px; }}
+.brand {{ margin-top:7px; text-align:center; font-size:10px; line-height:15px; color:#a08c62; font-family:"Segoe UI",sans-serif; letter-spacing:.5px; }}
 
 .cards {{ margin-top:14px; display:grid; grid-auto-flow:column; grid-template-columns:1fr 1fr; grid-template-rows:repeat({rows_n}, 50px); gap:6px 14px; }}
 .card {{ display:flex; align-items:center; gap:11px; height:50px; padding:0 12px 0 6px; border-radius:10px;
@@ -738,13 +741,16 @@ h1 {{ font-size:31px; color:#6e4410; letter-spacing:2px; line-height:1.18;
   overflow:hidden; text-overflow:ellipsis; }}
 .ctype {{ font-size:11.5px; color:#8a7452; margin-left:9px; letter-spacing:.5px; font-weight:normal; }}
 .cnt {{ display:flex; align-items:center; justify-content:center; width:34px; height:100%; flex:none; }}
-.star {{ font-size:19px; line-height:1; display:block; }}
+.star {{ font-size:19px; line-height:1; display:block; transform:translateY(-2px);
+  filter:drop-shadow(0 1px 2px rgba(60,40,10,.75)); }}
 .num {{ font-size:19px; color:#fff; font-weight:bold; display:block; line-height:1; margin-right:0;
-  text-shadow:0 1px 2px rgba(60,40,10,.75), 0 -1px 2px rgba(60,40,10,.5), 1px 0 2px rgba(60,40,10,.5), -1px 0 2px rgba(60,40,10,.5); }}
+  -webkit-text-stroke:3px #000; paint-order:stroke fill;
+  filter:drop-shadow(0 1px 2px rgba(60,40,10,.75)); }}
 
-.code {{ margin-top:14px; background:#efe0b8; border:1px solid #c4ab74; border-radius:9px;
-  padding:11px 14px; font-family:Consolas,monospace; font-size:11.5px; color:#6a5535;
+.code {{ margin-top:14px; background:#e3ce95; border:1px solid #c4ab74; border-radius:9px;
+  padding:11px 14px; font-family:Consolas,monospace; font-size:11.5px; color:#4a3a26;
   word-break:break-all; text-align:center; letter-spacing:.4px; }}
+.code-label {{ font-family:"Microsoft YaHei","Segoe UI",sans-serif; font-weight:bold; letter-spacing:0; }}
 </style></head><body>
 <div class="wrap">
   <div class="top">
@@ -764,13 +770,13 @@ h1 {{ font-size:31px; color:#6e4410; letter-spacing:2px; line-height:1.18;
       <div class="brand">{T["brand"]}</div></div>
   </div>
   <div class="cards">{"".join(row(r) for r in deck["cards"])}</div>
-  <div class="code">{deck["code"]}</div>
+  <div class="code"><span class="code-label">{T["code_label"]}</span>{deck["code"]}</div>
 </div>
 <script>document.title = document.body.scrollHeight;</script>
 </body></html>'''
 
 
-def cmd_image(src, lang="zh", name=None, out=None):
+def cmd_image(src, lang="zh", name=None, name_en=None, out=None, force=False, merge=False):
     if src.startswith("AAE"):
         code, arch_name = src, None
     else:
@@ -780,18 +786,31 @@ def cmd_image(src, lang="zh", name=None, out=None):
     lookup_en = {c["dbfId"]: c for c in load_db_en()}
     fmt, heroes, cards, sb, _ = parse_deck_code(code, lookup_zh)
 
+    if fmt == 2 and not force:
+        bad = []
+        for d, cnt in cards:
+            c = lookup_zh.get(d, {})
+            if c.get("set") not in STANDARD_SETS:
+                bad.append(f"{c.get('name', '#' + str(d))} x{cnt} (set: {c.get('set')})")
+        if bad:
+            print("出图被拦截: 标准卡组含非标准池卡 (--force 可强制渲染):")
+            for b in bad:
+                print("  - " + b)
+            sys.exit(1)
+
     rows = []
     for d, cnt in cards:
         cz, ce = lookup_zh.get(d, {}), lookup_en.get(d, {})
-        rows.append({
-            "name": cz.get("name", f"#{d}"),
-            "name_en": ce.get("name") or cz.get("name", f"#{d}"),
-            "count": cnt, "cost": cz.get("cost", 0),
-            "type_zh": TYPE_ZH.get(cz.get("type"), cz.get("type", "")),
-            "type_en": TYPE_EN.get(cz.get("type"), cz.get("type", "")),
-            "rarity": cz.get("rarity", ""), "set": cz.get("set", ""),
-        })
-    rows.sort(key=lambda r: (r["cost"], r["name"]))
+        for _ in range(1 if merge else cnt):
+            rows.append({
+                "name": cz.get("name", f"#{d}"),
+                "name_en": ce.get("name") or cz.get("name", f"#{d}"),
+                "count": cnt if merge else 1, "cost": cz.get("cost", 0),
+                "type_zh": TYPE_ZH.get(cz.get("type"), cz.get("type", "")),
+                "type_en": TYPE_EN.get(cz.get("type"), cz.get("type", "")),
+                "rarity": cz.get("rarity", ""), "set": cz.get("set", ""),
+            })
+    rows.sort(key=lambda r: (r["cost"], RARITY_RANK.get(r["rarity"], 0), r["name"]))
 
     hero_card = lookup_zh.get(heroes[0], {}) if heroes else {}
     cc = hero_card.get("cardClass")
@@ -805,12 +824,12 @@ def cmd_image(src, lang="zh", name=None, out=None):
     hero_zh = hero_card.get("name") or class_zh
     hero_en = (lookup_en.get(heroes[0], {}).get("name") if heroes else "") or hero_zh
 
-    if name:
-        dn_zh = dn_en = name
-    elif arch_name:
-        dn_zh = dn_en = arch_name
+    base = name or arch_name
+    if base:
+        dn_zh = base
+        dn_en = name_en or (base if base.isascii() else f"{class_en} Deck")
     else:
-        dn_zh, dn_en = f"{class_zh}卡组", f"{class_en} Deck"
+        dn_zh, dn_en = f"{class_zh}卡组", name_en or f"{class_en} Deck"
 
     deck = {
         "deck_name": dn_zh, "deck_name_en": dn_en,
@@ -831,7 +850,9 @@ def cmd_image(src, lang="zh", name=None, out=None):
             op = Path(out)
             png = op.with_name(f"{op.stem}-{lg}{op.suffix}") if len(langs) > 1 else op
         else:
-            safe = re.sub(r'[\\/:*?"<>|]', "_", dn_zh if lg == "zh" else dn_en)
+            safe = re.sub(r'[\\/:*?"<>|]', "_", base or dn_zh)
+            if merge:
+                safe += "-merge"
             png = IMAGES_DIR / f"{safe}-{lg}.png"
         html = png.with_suffix(".html")
         png.parent.mkdir(parents=True, exist_ok=True)
@@ -867,21 +888,24 @@ def main():
     elif cmd == "fetch":
         cmd_fetch(rest[0])
     elif cmd == "image":
-        kv, pos = {}, []
+        kv, flags, pos = {}, set(), []
         for a in rest:
             if a.startswith("--"):
                 k, _, v = a[2:].partition("=")
-                if k in ("lang", "name", "out"):
+                k = k.replace("-", "_")
+                if k in ("lang", "name", "name_en", "out"):
                     kv[k] = v
+                elif k in ("force", "merge"):
+                    flags.add(k)
                 else:
                     sys.exit(f"未知选项: --{k}")
             else:
                 pos.append(a)
         if not pos:
-            sys.exit("用法: image <名字或代码> [--lang=zh|en|both] [--name=标题] [--out=输出路径.png]")
+            sys.exit("用法: image <名字或代码> [--lang=zh|en|both] [--name=标题] [--name-en=英文标题] [--force] [--merge] [--out=输出路径.png]")
         if kv.get("lang", "zh") not in ("zh", "en", "both"):
             sys.exit("--lang 只能是 zh / en / both")
-        cmd_image(pos[0], **kv)
+        cmd_image(pos[0], force=("force" in flags), merge=("merge" in flags), **kv)
     elif cmd == "filter":
         kv = {}
         for a in rest:
