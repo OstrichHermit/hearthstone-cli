@@ -165,7 +165,8 @@ def print_card(cost, name, cnt, dbf, t, set_=""):
 def cmd_update():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     print("下载中...", DB_URL)
-    with urllib.request.urlopen(DB_URL, timeout=60) as r:
+    req = urllib.request.Request(DB_URL, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=60) as r:
         DB_PATH.write_bytes(r.read())
     db = load_db()
     print(f"完成: {len(db)} 条 -> {DB_PATH}")
