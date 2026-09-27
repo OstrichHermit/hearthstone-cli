@@ -701,6 +701,7 @@ body {{ width:760px; min-height:100px; position:relative;
 .tinfo {{ min-width:0; }}
 h1 {{ font-size:31px; color:#6e4410; letter-spacing:2px; line-height:1.18;
   display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden;
+  padding-bottom:4px; margin-bottom:-4px;
   text-shadow:0 1px 0 rgba(255,255,255,.7); }}
 .sub {{ font-size:13px; color:#8a7452; margin-top:4px; letter-spacing:.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
 .meta {{ display:flex; gap:8px; margin-top:9px; flex-wrap:wrap; }}
@@ -723,7 +724,7 @@ h1 {{ font-size:31px; color:#6e4410; letter-spacing:2px; line-height:1.18;
 .bl {{ font-size:11px; color:#8a7452; }}
 .brand {{ margin-top:7px; text-align:center; font-size:10px; color:#a08c62; font-family:"Segoe UI",sans-serif; letter-spacing:.5px; }}
 
-.cards {{ margin-top:14px; display:grid; grid-auto-flow:column; grid-template-rows:repeat({rows_n}, 50px); gap:6px 14px; }}
+.cards {{ margin-top:14px; display:grid; grid-auto-flow:column; grid-template-columns:1fr 1fr; grid-template-rows:repeat({rows_n}, 50px); gap:6px 14px; }}
 .card {{ display:flex; align-items:center; gap:11px; height:50px; padding:0 12px 0 6px; border-radius:10px;
   min-width:0; overflow:hidden; }}
 .gem {{ width:34px; height:38px; flex:none; margin-left:2px; position:relative;
@@ -733,7 +734,7 @@ h1 {{ font-size:31px; color:#6e4410; letter-spacing:2px; line-height:1.18;
     radial-gradient(circle at 34% 22%, #a8d4ff 0%, #3f83d6 50%, #10365f 100%); }}
 .gem b {{ position:absolute; inset:0; z-index:2; display:flex; align-items:center; justify-content:center;
   transform:translateY(-1px); font-size:16px; color:#fff; text-shadow:0 1px 3px #001f3d; }}
-.cname {{ flex:1; min-width:0; font-size:17px; line-height:1; color:#3a2e1c; font-weight:bold; white-space:nowrap;
+.cname {{ flex:1; min-width:0; font-size:17px; line-height:1.4; color:#3a2e1c; font-weight:bold; white-space:nowrap;
   overflow:hidden; text-overflow:ellipsis; transform:translateY(-1px); }}
 .ctype {{ font-size:11.5px; color:#8a7452; margin-left:9px; letter-spacing:.5px; font-weight:normal; }}
 .cnt {{ display:flex; align-items:center; justify-content:center; width:34px; height:100%; flex:none; }}
