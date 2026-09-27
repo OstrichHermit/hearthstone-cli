@@ -21,6 +21,7 @@ deck.json 格式:
 """
 import base64
 import json
+import os
 import re
 import sys
 import time
@@ -167,7 +168,11 @@ def cmd_update():
     print("下载中...", DB_URL)
     req = urllib.request.Request(DB_URL, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=60) as r:
-        DB_PATH.write_bytes(r.read())
+        data = r.read()
+    json.loads(data)  # 完整性校验: 坏数据不落盘
+    tmp = DB_PATH.with_suffix(".json.tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, DB_PATH)  # 原子替换: 中途失败不会损坏现有牌库
     db = load_db()
     print(f"完成: {len(db)} 条 -> {DB_PATH}")
 
