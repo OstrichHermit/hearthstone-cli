@@ -38,7 +38,6 @@ CARD_TYPES = {"MINION", "SPELL", "WEAPON", "LOCATION", "HERO"}
 # 10.21 上线"黑暗帝国"后需新增对应 set 代码
 STANDARD_SETS = {
     "CORE",                    # 核心系列 (轮换子集)
-    "CORE_HIDDEN",             # 核心系列隐藏池 (数据源标记, 实际属 CORE 池)
     "EMERALD_DREAM",           # 翡翠梦境 2025
     "THE_LOST_CITY",           # 失落之城 2025
     "TIME_TRAVEL",             # 穿越时间流 2026上半年
