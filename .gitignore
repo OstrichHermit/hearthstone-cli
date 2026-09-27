@@ -6,7 +6,7 @@ cards_en.json
 decks/
 
 # Rendered deck images
-images/
+image/
 
 __pycache__/
 *.pyc
