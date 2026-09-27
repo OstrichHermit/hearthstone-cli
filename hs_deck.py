@@ -735,7 +735,7 @@ h1 {{ font-size:31px; color:#6e4410; letter-spacing:2px; line-height:1.18;
 .gem b {{ position:absolute; inset:0; z-index:2; display:flex; align-items:center; justify-content:center;
   transform:translateY(-1px); font-size:16px; color:#fff; text-shadow:0 1px 3px #001f3d; }}
 .cname {{ flex:1; min-width:0; font-size:17px; line-height:1.4; color:#3a2e1c; font-weight:bold; white-space:nowrap;
-  overflow:hidden; text-overflow:ellipsis; transform:translateY(-1px); }}
+  overflow:hidden; text-overflow:ellipsis; }}
 .ctype {{ font-size:11.5px; color:#8a7452; margin-left:9px; letter-spacing:.5px; font-weight:normal; }}
 .cnt {{ display:flex; align-items:center; justify-content:center; width:34px; height:100%; flex:none; }}
 .star {{ font-size:19px; line-height:1; display:block; }}
