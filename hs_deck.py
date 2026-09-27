@@ -40,7 +40,7 @@ DB_PATH = BASE / "cards_zh.json"
 DB_EN_PATH = BASE / "cards_en.json"
 DB_URL = "https://api.hearthstonejson.com/v1/latest/zhCN/cards.collectible.json"
 DB_URL_EN = "https://api.hearthstonejson.com/v1/latest/enUS/cards.collectible.json"
-IMAGES_DIR = BASE / "images"
+IMAGES_DIR = BASE / "image"
 
 CARD_TYPES = {"MINION", "SPELL", "WEAPON", "LOCATION", "HERO"}
 
@@ -633,7 +633,8 @@ def shot_html(chrome, html_path, png_path):
     if not m:
         sys.exit("渲染失败: 未能获取页面高度 (Chrome 输出异常)")
     height = int(m.group(1))
-    subprocess.run(base + [f"--screenshot={png_path}", f"--window-size=760,{height}", url], **kw)
+    subprocess.run(base + [f"--screenshot={png_path}", f"--window-size=760,{height}",
+                           "--force-device-scale-factor=2", url], **kw)
     if not png_path.exists():
         sys.exit("渲染失败: 截图未生成")
     return height
@@ -641,8 +642,8 @@ def shot_html(chrome, html_path, png_path):
 
 def build_image_html(deck, lang):
     T = {
-        "zh": {"curve": "法力曲线", "std": deck["format_zh"], "cards": "卡牌", "dust": f"合成 {deck['dust']} 尘", "code_label": "卡组代码：", "brand": "hs-deck-cli · 数据: HearthstoneJSON"},
-        "en": {"curve": "Mana Curve", "std": deck["format_en"], "cards": "Cards", "dust": f"{deck['dust']} Dust", "code_label": "Deck Code: ", "brand": "hs-deck-cli · Data: HearthstoneJSON"},
+        "zh": {"curve": "法力曲线", "std": deck["format_zh"], "cards": "卡牌", "dust": f"合成 {deck['dust']} 尘", "brand": "hs-deck-cli · 数据: HearthstoneJSON"},
+        "en": {"curve": "Mana Curve", "std": deck["format_en"], "cards": "Cards", "dust": f"{deck['dust']} Dust", "brand": "hs-deck-cli · Data: HearthstoneJSON"},
     }[lang]
     title = deck["deck_name"] if lang == "zh" else deck["deck_name_en"]
     hero = deck["hero_zh"] if lang == "zh" else deck["hero_en"]
@@ -748,9 +749,8 @@ h1 {{ font-size:31px; color:#6e4410; letter-spacing:2px; line-height:1.18;
   filter:drop-shadow(0 1px 2px rgba(60,40,10,.75)); }}
 
 .code {{ margin-top:14px; background:#e3ce95; border:1px solid #c4ab74; border-radius:9px;
-  padding:11px 14px; font-family:Consolas,monospace; font-size:11.5px; color:#4a3a26;
-  word-break:break-all; text-align:center; letter-spacing:.4px; }}
-.code-label {{ font-family:"Microsoft YaHei","Segoe UI",sans-serif; font-weight:bold; letter-spacing:0; }}
+  padding:11px 14px; font-family:Consolas,monospace; font-size:12px; color:#4a3a26;
+  word-break:break-all; text-wrap:balance; text-align:center; }}
 </style></head><body>
 <div class="wrap">
   <div class="top">
@@ -770,7 +770,7 @@ h1 {{ font-size:31px; color:#6e4410; letter-spacing:2px; line-height:1.18;
       <div class="brand">{T["brand"]}</div></div>
   </div>
   <div class="cards">{"".join(row(r) for r in deck["cards"])}</div>
-  <div class="code"><span class="code-label">{T["code_label"]}</span>{deck["code"]}</div>
+  <div class="code">{deck["code"]}</div>
 </div>
 <script>document.title = document.body.scrollHeight;</script>
 </body></html>'''
@@ -858,7 +858,7 @@ def cmd_image(src, lang="zh", name=None, name_en=None, out=None, force=False, me
         png.parent.mkdir(parents=True, exist_ok=True)
         html.write_text(build_image_html(deck, lg), encoding="utf-8")
         h = shot_html(chrome, html, png)
-        print(f"已生成: {png} (760x{h})")
+        print(f"已生成: {png} (1520x{h * 2})")
     if sb:
         print(f"提示: 该卡组含副牌库 {sum(c for _, c, _ in sb)} 张, 卡组图仅展示主卡组")
 
