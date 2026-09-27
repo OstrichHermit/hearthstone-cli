@@ -677,7 +677,7 @@ def build_image_html(deck, lang):
 </div>'''
 
     bars = "".join(
-        f'<div class="bar"><span class="bv">{v}</span><div class="bwrap"><div class="bfill" style="height:{max(int(v / mx * 62), 6)}px"></div></div><span class="bl">{"7+" if k == 7 else k}</span></div>'
+        f'<div class="bar"><span class="bv">{v}</span><div class="bwrap"><div class="bfill" style="height:{max(int(v / mx * 50), 6)}px"></div></div><span class="bl">{"7+" if k == 7 else k}</span></div>'
         for k, v in buckets.items()
     )
 
@@ -686,7 +686,7 @@ def build_image_html(deck, lang):
 * {{ margin:0; padding:0; box-sizing:border-box; }}
 body {{ width:760px; min-height:100px; position:relative;
   font-family:"Microsoft YaHei","Segoe UI",sans-serif; color:#4a3a26;
-  background:linear-gradient(180deg, #f8f3e7 0%, #f8f3e7 24%, #f6e2b4 31%, #f6e2b4 100%); }}
+  background:linear-gradient(180deg, #f8f3e7 0px, #f8f3e7 160px, #f6e2b4 190px, #f6e2b4 100%); }}
 .frame {{ position:absolute; inset:8px; border:2px solid #b09055; border-radius:12px; pointer-events:none; }}
 .frame2 {{ position:absolute; inset:14px; border:1px solid #cbb98e; border-radius:8px; pointer-events:none; }}
 .corner {{ position:absolute; width:26px; height:26px; border:3px solid #9a7b42; pointer-events:none; z-index:5; }}
@@ -717,17 +717,18 @@ h1 {{ font-size:31px; color:#6e4410; letter-spacing:2px; line-height:1.18;
 .curve {{ width:318px; flex:none; display:flex; flex-direction:column; justify-content:flex-end;
   padding:10px 14px 8px; border:1px solid #cbb98e; border-radius:10px;
   background:linear-gradient(180deg, #f3ecdc, #ece2cb); }}
-.curve h3 {{ font-size:12px; color:#8a6d3b; letter-spacing:2px; text-align:center; margin-bottom:4px; }}
-.chart {{ display:flex; align-items:flex-end; gap:7px; height:92px; }}
-.bar {{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:3px; height:100%; }}
-.bv {{ font-size:12px; color:#6a5535; font-weight:bold; }}
-.bwrap {{ width:100%; display:flex; justify-content:center; align-items:flex-end; height:60px; }}
+.curve-head {{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; }}
+.curve-head h3 {{ font-size:12px; color:#8a6d3b; letter-spacing:2px; margin:0; }}
+.chart {{ display:flex; align-items:flex-end; gap:7px; height:86px; }}
+.bar {{ flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; height:100%; }}
+.bv {{ font-size:12px; color:#6a5535; font-weight:bold; height:15px; line-height:15px; flex:none; }}
+.bwrap {{ flex:1; min-height:0; width:100%; display:flex; justify-content:center; align-items:flex-end; }}
 .bfill {{ width:82%; border-radius:4px 4px 2px 2px;
   background:radial-gradient(circle at 30% 6%, rgba(255,255,255,.65) 0%, rgba(255,255,255,0) 30%),
     radial-gradient(circle at 34% 10%, #a8d4ff 0%, #3f83d6 55%, #10365f 100%);
   box-shadow:0 1px 3px rgba(20,65,126,.35); min-height:6px; }}
-.bl {{ font-size:11px; color:#8a7452; }}
-.brand {{ margin-top:7px; text-align:center; font-size:10px; line-height:15px; color:#a08c62; font-family:"Segoe UI",sans-serif; letter-spacing:.5px; }}
+.bl {{ font-size:11px; color:#8a7452; height:15px; line-height:15px; flex:none; }}
+.brand {{ text-align:right; font-size:10px; line-height:15px; color:#a08c62; font-family:"Segoe UI",sans-serif; letter-spacing:.5px; }}
 
 .cards {{ margin-top:14px; display:grid; grid-auto-flow:column; grid-template-columns:1fr 1fr; grid-template-rows:repeat({rows_n}, 50px); gap:6px 14px; }}
 .card {{ display:flex; align-items:center; gap:11px; height:50px; padding:0 12px 0 6px; border-radius:10px;
@@ -767,8 +768,9 @@ h1 {{ font-size:31px; color:#6e4410; letter-spacing:2px; line-height:1.18;
         </div>
       </div>
     </div>
-    <div class="curve"><h3>{T["curve"]}</h3><div class="chart">{bars}</div>
-      <div class="brand">{T["brand"]}</div></div>
+    <div class="curve">
+      <div class="curve-head"><h3>{T["curve"]}</h3><span class="brand">{T["brand"]}</span></div>
+      <div class="chart">{bars}</div></div>
   </div>
   <div class="cards">{"".join(row(r) for r in deck["cards"])}</div>
   <div class="code">{deck["code"]}</div>
