@@ -1,7 +1,7 @@
 """猪猪组卡器 — 面向 Agent 的炉石传说组卡工具
 
 子命令:
-  update                              从 HearthstoneJSON 刷新卡牌库
+  update                              从 HearthstoneJSON 刷新卡牌库 (中文+英文)
   filter  [选项]                      筛卡 (--class/--set/--cost/--type/--text/--name)
   decode  <卡组代码>                  解码卡组代码为卡牌清单
   validate <deck.json>                校验卡组合法性并输出卡组代码 (stdin 用 -)
@@ -10,6 +10,8 @@
   show <名字>                         查看存档卡组明细
   check [名字]                        体检存档卡组 (版本更新后查失效卡; 省略名字=全部)
   fetch <URL>                         抓取网页中的卡组代码 (打印, 不入库)
+  image <名字或代码> [--lang=zh|en|both] [--name=标题] [--out=路径.png]
+                                      生成卡组长图 PNG (本地 Chrome/Edge 无头渲染)
 
 deck.json 格式:
   {
@@ -23,14 +25,20 @@ import base64
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import time
 import urllib.request
 from collections import defaultdict
 from pathlib import Path
 
-DB_PATH = Path(r"D:\AgentWorkspace\tools\hs\cards_zh.json")
+BASE = Path(__file__).resolve().parent
+DB_PATH = BASE / "cards_zh.json"
+DB_EN_PATH = BASE / "cards_en.json"
 DB_URL = "https://api.hearthstonejson.com/v1/latest/zhCN/cards.collectible.json"
+DB_URL_EN = "https://api.hearthstonejson.com/v1/latest/enUS/cards.collectible.json"
+IMAGES_DIR = BASE / "images"
 
 CARD_TYPES = {"MINION", "SPELL", "WEAPON", "LOCATION", "HERO"}
 
@@ -59,11 +67,24 @@ CLASS_NAMES = {
 CLASS_CN_TO_EN = {v: k for k, v in CLASS_NAMES.items()}
 CLASS_CN_TO_EN["萨满祭司"] = "SHAMAN"  # 游客卡文本用全称
 
+CLASS_NAMES_EN = {
+    "WARRIOR": "Warrior", "SHAMAN": "Shaman", "ROGUE": "Rogue", "PALADIN": "Paladin",
+    "HUNTER": "Hunter", "DRUID": "Druid", "WARLOCK": "Warlock", "MAGE": "Mage",
+    "PRIEST": "Priest", "DEMONHUNTER": "Demon Hunter", "DEATHKNIGHT": "Death Knight",
+    "NEUTRAL": "Neutral",
+}
+
 
 def load_db():
     if not DB_PATH.exists():
         sys.exit(f"卡牌库不存在: {DB_PATH}，先运行 update 子命令")
     return json.loads(DB_PATH.read_text(encoding="utf-8"))
+
+
+def load_db_en():
+    if not DB_EN_PATH.exists():
+        sys.exit(f"英文卡牌库不存在: {DB_EN_PATH}，先运行 update 子命令")
+    return json.loads(DB_EN_PATH.read_text(encoding="utf-8"))
 
 
 def playable(db):
@@ -164,16 +185,16 @@ def print_card(cost, name, cnt, dbf, t, set_=""):
 
 def cmd_update():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    print("下载中...", DB_URL)
-    req = urllib.request.Request(DB_URL, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        data = r.read()
-    json.loads(data)  # 完整性校验: 坏数据不落盘
-    tmp = DB_PATH.with_suffix(".json.tmp")
-    tmp.write_bytes(data)
-    os.replace(tmp, DB_PATH)  # 原子替换: 中途失败不会损坏现有牌库
-    db = load_db()
-    print(f"完成: {len(db)} 条 -> {DB_PATH}")
+    for path, url in ((DB_PATH, DB_URL), (DB_EN_PATH, DB_URL_EN)):
+        print("下载中...", url)
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            data = r.read()
+        cards = json.loads(data)  # 完整性校验: 坏数据不落盘
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, path)  # 原子替换: 中途失败不会损坏现有牌库
+        print(f"完成: {len(cards)} 条 -> {path}")
 
 
 def cmd_filter(args):
@@ -202,7 +223,7 @@ def cmd_filter(args):
         print_card(c.get("cost", 0), c["name"], 1, c["dbfId"], c["type"], c.get("set", ""))
 
 
-DECKS_DIR = Path(r"D:\AgentWorkspace\tools\hs\decks")
+DECKS_DIR = BASE / "decks"
 CODE_RE = r"AAE[A-Za-z0-9+/=]{20,}"
 
 
@@ -557,6 +578,269 @@ def cmd_fetch(url):
         print(f"  {c}")
 
 
+# ---------- 卡组图 (image) ----------
+
+RAR = {
+    "FREE":      {"c": "#ffffff"},
+    "COMMON":    {"c": "#ffffff"},
+    "RARE":      {"c": "#2e9bff"},
+    "EPIC":      {"c": "#c85aff"},
+    "LEGENDARY": {"c": "#ffab00"},
+}
+CLASS_ICONS = {
+    "Warrior": "⚔️", "Mage": "🔮", "Hunter": "🏹", "Warlock": "👁️",
+    "Priest": "✨", "Rogue": "🗡️", "Paladin": "⚜️", "Shaman": "⚡",
+    "Druid": "🍃", "Demon Hunter": "😈", "Death Knight": "💀",
+}
+TYPE_ZH = {"MINION": "随从", "SPELL": "法术", "WEAPON": "武器", "LOCATION": "地标", "HERO": "英雄"}
+TYPE_EN = {"MINION": "Minion", "SPELL": "Spell", "WEAPON": "Weapon", "LOCATION": "Location", "HERO": "Hero"}
+DUST_COST = {"COMMON": 40, "RARE": 100, "EPIC": 400, "LEGENDARY": 1600}
+
+
+def find_chrome():
+    cands = []
+    env = os.environ.get("CHROME_PATH")
+    if env:
+        cands.append(env)
+    for exe in ("chrome", "google-chrome", "chromium", "msedge"):
+        p = shutil.which(exe)
+        if p:
+            cands.append(p)
+    if os.name == "nt":
+        cands += [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        ]
+    for p in cands:
+        if p and Path(p).exists():
+            return p
+    sys.exit("找不到 Chrome / Edge 浏览器 (可用环境变量 CHROME_PATH 指定路径)")
+
+
+def shot_html(chrome, html_path, png_path):
+    url = html_path.as_uri()
+    base = [chrome, "--headless", "--disable-gpu", "--hide-scrollbars"]
+    kw = {"capture_output": True, "timeout": 90, "encoding": "utf-8", "errors": "replace"}
+    if os.name == "nt":
+        kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+    dom = subprocess.run(base + ["--dump-dom", url], **kw)
+    m = re.search(r"<title>(\d+)</title>", dom.stdout or "")
+    if not m:
+        sys.exit("渲染失败: 未能获取页面高度 (Chrome 输出异常)")
+    height = int(m.group(1))
+    subprocess.run(base + [f"--screenshot={png_path}", f"--window-size=760,{height}", url], **kw)
+    if not png_path.exists():
+        sys.exit("渲染失败: 截图未生成")
+    return height
+
+
+def build_image_html(deck, lang):
+    T = {
+        "zh": {"curve": "法力曲线", "std": deck["format_zh"], "cards": "卡牌", "dust": f"合成 {deck['dust']} 尘", "brand": "hs-deck-cli · 数据: HearthstoneJSON"},
+        "en": {"curve": "Mana Curve", "std": deck["format_en"], "cards": "Cards", "dust": f"{deck['dust']} Dust", "brand": "hs-deck-cli · Data: HearthstoneJSON"},
+    }[lang]
+    title = deck["deck_name"] if lang == "zh" else deck["deck_name_en"]
+    hero = deck["hero_zh"] if lang == "zh" else deck["hero_en"]
+    cls = deck["class_zh"] if lang == "zh" else deck["class_en"]
+    buckets = {i: 0 for i in range(1, 8)}
+    for r in deck["cards"]:
+        buckets[min(r["cost"], 7)] += r["count"]
+    mx = max(buckets.values())
+    rows_n = (len(deck["cards"]) + 1) // 2
+    icon = CLASS_ICONS.get(deck["class_en"], "⚔️")
+
+    def row(r):
+        c = RAR[r["rarity"]]["c"]
+        typ = r["type_zh"] if lang == "zh" else r["type_en"]
+        nm = r["name"] if lang == "zh" else r["name_en"]
+        tail = f"{c}e0" if r["rarity"] in ("COMMON", "FREE") else f"{c}a8"
+        bg = (f"background:linear-gradient(90deg, {c}00 0%, {c}00 48%, {c}30 66%, {c}80 85%, {tail} 100%),"
+              "linear-gradient(90deg, rgba(253,243,216,.9), rgba(253,243,216,.9));"
+              'box-shadow:0 1px 3px rgba(90,70,40,.18);')
+        if r["rarity"] == "LEGENDARY":
+            cnt_html = '<span class="star">⭐</span>'
+        elif r["count"] > 1:
+            cnt_html = f'<span class="num">{r["count"]}</span>'
+        else:
+            cnt_html = ""
+        return f'''<div class="card" style="{bg}">
+  <div class="gem"><div class="hex-in"></div><b>{r["cost"]}</b></div>
+  <div class="cname">{nm}<span class="ctype">{typ}</span></div>
+  <div class="cnt">{cnt_html}</div>
+</div>'''
+
+    bars = "".join(
+        f'<div class="bar"><span class="bv">{v}</span><div class="bwrap"><div class="bfill" style="height:{max(int(v / mx * 62), 6)}px"></div></div><span class="bl">{"7+" if k == 7 else k}</span></div>'
+        for k, v in buckets.items()
+    )
+
+    return f'''<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ width:760px; min-height:100px; position:relative;
+  font-family:"Microsoft YaHei","Segoe UI",sans-serif; color:#4a3a26;
+  background:linear-gradient(180deg, #f8f3e7 0%, #f8f3e7 24%, #f6e2b4 31%, #f6e2b4 100%); }}
+.frame {{ position:absolute; inset:8px; border:2px solid #b09055; border-radius:12px; pointer-events:none; }}
+.frame2 {{ position:absolute; inset:14px; border:1px solid #cbb98e; border-radius:8px; pointer-events:none; }}
+.corner {{ position:absolute; width:26px; height:26px; border:3px solid #9a7b42; pointer-events:none; z-index:5; }}
+.c-tl {{ top:4px; left:4px; border-right:none; border-bottom:none; border-radius:10px 0 0 0; }}
+.c-tr {{ top:4px; right:4px; border-left:none; border-bottom:none; border-radius:0 10px 0 0; }}
+.c-bl {{ bottom:4px; left:4px; border-right:none; border-top:none; border-radius:0 0 0 10px; }}
+.c-br {{ bottom:4px; right:4px; border-left:none; border-top:none; border-radius:0 0 10px 0; }}
+.wrap {{ padding:14px 26px 17px; display:flex; flex-direction:column; }}
+
+.top {{ display:flex; align-items:stretch; gap:18px; padding:8px 4px 14px;
+  border-bottom:1px solid #cbb98e; }}
+.head-l {{ flex:1; min-width:0; display:flex; gap:14px; align-items:center; }}
+.sigil {{ width:86px; height:86px; flex:none; border-radius:50%;
+  background:radial-gradient(circle at 35% 28%, #f7e7c2, #e3c892 60%, #cfa96e);
+  border:3px solid #b09055; box-shadow:0 0 12px rgba(176,144,85,.35);
+  display:flex; align-items:center; justify-content:center; font-size:40px; line-height:1; }}
+.tinfo {{ min-width:0; }}
+h1 {{ font-size:31px; color:#6e4410; letter-spacing:2px; line-height:1.18;
+  display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden;
+  text-shadow:0 1px 0 rgba(255,255,255,.7); }}
+.sub {{ font-size:13px; color:#8a7452; margin-top:4px; letter-spacing:.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.meta {{ display:flex; gap:8px; margin-top:9px; flex-wrap:wrap; }}
+.chip {{ font-size:12px; color:#6a5535; padding:2.5px 11px; border-radius:14px; white-space:nowrap;
+  background:#f0e0b4; border:1px solid #c4ab74; }}
+.chip b {{ color:#4a3a26; }}
+
+.curve {{ width:318px; flex:none; display:flex; flex-direction:column; justify-content:flex-end;
+  padding:10px 14px 8px; border:1px solid #cbb98e; border-radius:10px;
+  background:linear-gradient(180deg, #f3ecdc, #ece2cb); }}
+.curve h3 {{ font-size:12px; color:#8a6d3b; letter-spacing:2px; text-align:center; margin-bottom:4px; }}
+.chart {{ display:flex; align-items:flex-end; gap:7px; height:92px; }}
+.bar {{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:3px; height:100%; }}
+.bv {{ font-size:12px; color:#6a5535; font-weight:bold; }}
+.bwrap {{ width:100%; display:flex; justify-content:center; align-items:flex-end; height:60px; }}
+.bfill {{ width:82%; border-radius:4px 4px 2px 2px;
+  background:radial-gradient(circle at 30% 6%, rgba(255,255,255,.65) 0%, rgba(255,255,255,0) 30%),
+    radial-gradient(circle at 34% 10%, #a8d4ff 0%, #3f83d6 55%, #10365f 100%);
+  box-shadow:0 1px 3px rgba(20,65,126,.35); min-height:6px; }}
+.bl {{ font-size:11px; color:#8a7452; }}
+.brand {{ margin-top:7px; text-align:center; font-size:10px; color:#a08c62; font-family:"Segoe UI",sans-serif; letter-spacing:.5px; }}
+
+.cards {{ margin-top:14px; display:grid; grid-auto-flow:column; grid-template-rows:repeat({rows_n}, 50px); gap:6px 14px; }}
+.card {{ display:flex; align-items:center; gap:11px; height:50px; padding:0 12px 0 6px; border-radius:10px;
+  min-width:0; overflow:hidden; }}
+.gem {{ width:34px; height:38px; flex:none; margin-left:2px; position:relative;
+  filter:drop-shadow(0 1px 3px rgba(20,65,126,.4)); }}
+.hex-in {{ position:absolute; inset:0; clip-path:polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  background:radial-gradient(circle at 30% 18%, rgba(255,255,255,.8) 0%, rgba(255,255,255,0) 32%),
+    radial-gradient(circle at 34% 22%, #a8d4ff 0%, #3f83d6 50%, #10365f 100%); }}
+.gem b {{ position:absolute; inset:0; z-index:2; display:flex; align-items:center; justify-content:center;
+  transform:translateY(-1px); font-size:16px; color:#fff; text-shadow:0 1px 3px #001f3d; }}
+.cname {{ flex:1; min-width:0; font-size:17px; line-height:1; color:#3a2e1c; font-weight:bold; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis; transform:translateY(-1px); }}
+.ctype {{ font-size:11.5px; color:#8a7452; margin-left:9px; letter-spacing:.5px; font-weight:normal; }}
+.cnt {{ display:flex; align-items:center; justify-content:center; width:34px; height:100%; flex:none; }}
+.star {{ font-size:19px; line-height:1; display:block; }}
+.num {{ font-size:19px; color:#fff; font-weight:bold; display:block; line-height:1; margin-right:0;
+  text-shadow:0 1px 2px rgba(60,40,10,.75), 0 -1px 2px rgba(60,40,10,.5), 1px 0 2px rgba(60,40,10,.5), -1px 0 2px rgba(60,40,10,.5); }}
+
+.code {{ margin-top:14px; background:#efe0b8; border:1px solid #c4ab74; border-radius:9px;
+  padding:11px 14px; font-family:Consolas,monospace; font-size:11.5px; color:#6a5535;
+  word-break:break-all; text-align:center; letter-spacing:.4px; }}
+</style></head><body>
+<div class="wrap">
+  <div class="top">
+    <div class="head-l">
+      <div class="sigil">{icon}</div>
+      <div class="tinfo">
+        <h1>{title}</h1>
+        <div class="sub">{cls} · {hero}</div>
+        <div class="meta">
+          <span class="chip">{T["std"]}</span>
+          <span class="chip">{deck["total"]} {T["cards"]}</span>
+          <span class="chip">{T["dust"]}</span>
+        </div>
+      </div>
+    </div>
+    <div class="curve"><h3>{T["curve"]}</h3><div class="chart">{bars}</div>
+      <div class="brand">{T["brand"]}</div></div>
+  </div>
+  <div class="cards">{"".join(row(r) for r in deck["cards"])}</div>
+  <div class="code">{deck["code"]}</div>
+</div>
+<script>document.title = document.body.scrollHeight;</script>
+</body></html>'''
+
+
+def cmd_image(src, lang="zh", name=None, out=None):
+    if src.startswith("AAE"):
+        code, arch_name = src, None
+    else:
+        arch_name = src
+        code = load_archive(src)[0]["code"]
+    lookup_zh = {c["dbfId"]: c for c in load_db()}
+    lookup_en = {c["dbfId"]: c for c in load_db_en()}
+    fmt, heroes, cards, sb, _ = parse_deck_code(code, lookup_zh)
+
+    rows = []
+    for d, cnt in cards:
+        cz, ce = lookup_zh.get(d, {}), lookup_en.get(d, {})
+        rows.append({
+            "name": cz.get("name", f"#{d}"),
+            "name_en": ce.get("name") or cz.get("name", f"#{d}"),
+            "count": cnt, "cost": cz.get("cost", 0),
+            "type_zh": TYPE_ZH.get(cz.get("type"), cz.get("type", "")),
+            "type_en": TYPE_EN.get(cz.get("type"), cz.get("type", "")),
+            "rarity": cz.get("rarity", ""), "set": cz.get("set", ""),
+        })
+    rows.sort(key=lambda r: (r["cost"], r["name"]))
+
+    hero_card = lookup_zh.get(heroes[0], {}) if heroes else {}
+    cc = hero_card.get("cardClass")
+    if not cc or cc == "NEUTRAL":
+        cnt_by_cls = defaultdict(int)
+        for d, cnt in cards:
+            cnt_by_cls[lookup_zh.get(d, {}).get("cardClass")] += cnt
+        cnt_by_cls.pop("NEUTRAL", None)
+        cc = max(cnt_by_cls, key=cnt_by_cls.get) if cnt_by_cls else "NEUTRAL"
+    class_zh, class_en = CLASS_NAMES.get(cc, cc), CLASS_NAMES_EN.get(cc, cc)
+    hero_zh = hero_card.get("name") or class_zh
+    hero_en = (lookup_en.get(heroes[0], {}).get("name") if heroes else "") or hero_zh
+
+    if name:
+        dn_zh = dn_en = name
+    elif arch_name:
+        dn_zh = dn_en = arch_name
+    else:
+        dn_zh, dn_en = f"{class_zh}卡组", f"{class_en} Deck"
+
+    deck = {
+        "deck_name": dn_zh, "deck_name_en": dn_en,
+        "hero_zh": hero_zh, "hero_en": hero_en,
+        "class_zh": class_zh, "class_en": class_en,
+        "format_zh": "标准" if fmt == 2 else "狂野",
+        "format_en": "Standard" if fmt == 2 else "Wild",
+        "code": code, "total": sum(r["count"] for r in rows),
+        "dust": sum(DUST_COST.get(r["rarity"], 0) * r["count"] for r in rows if r["set"] != "CORE"),
+        "cards": rows,
+    }
+    print(f"{dn_zh} | {deck['format_zh']} | {class_zh}({hero_zh}) | {deck['total']}张 | 合成{deck['dust']}尘")
+
+    chrome = find_chrome()
+    langs = ["zh", "en"] if lang == "both" else [lang]
+    for lg in langs:
+        if out:
+            op = Path(out)
+            png = op.with_name(f"{op.stem}-{lg}{op.suffix}") if len(langs) > 1 else op
+        else:
+            safe = re.sub(r'[\\/:*?"<>|]', "_", dn_zh if lg == "zh" else dn_en)
+            png = IMAGES_DIR / f"{safe}-{lg}.png"
+        html = png.with_suffix(".html")
+        png.parent.mkdir(parents=True, exist_ok=True)
+        html.write_text(build_image_html(deck, lg), encoding="utf-8")
+        h = shot_html(chrome, html, png)
+        print(f"已生成: {png} (760x{h})")
+    if sb:
+        print(f"提示: 该卡组含副牌库 {sum(c for _, c, _ in sb)} 张, 卡组图仅展示主卡组")
+
+
 def main():
     args = sys.argv[1:]
     if not args:
@@ -581,6 +865,22 @@ def main():
         cmd_check(rest[0] if rest else None)
     elif cmd == "fetch":
         cmd_fetch(rest[0])
+    elif cmd == "image":
+        kv, pos = {}, []
+        for a in rest:
+            if a.startswith("--"):
+                k, _, v = a[2:].partition("=")
+                if k in ("lang", "name", "out"):
+                    kv[k] = v
+                else:
+                    sys.exit(f"未知选项: --{k}")
+            else:
+                pos.append(a)
+        if not pos:
+            sys.exit("用法: image <名字或代码> [--lang=zh|en|both] [--name=标题] [--out=输出路径.png]")
+        if kv.get("lang", "zh") not in ("zh", "en", "both"):
+            sys.exit("--lang 只能是 zh / en / both")
+        cmd_image(pos[0], **kv)
     elif cmd == "filter":
         kv = {}
         for a in rest:
