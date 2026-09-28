@@ -38,6 +38,14 @@ For development use `pip install -e .` (edits take effect immediately). PyPI rel
 
 Data lives by default in `~/.hs-deck-cli/` (card database, deck library, rendered images); override with the `HS_DECK_HOME` environment variable. Run `hs update` once after installing to fetch the card database.
 
+### Install as an Agent Skill (optional)
+
+This repo ships with an Agent Skill (`skills/hs-deck/SKILL.md`). Copy it into your AI agent's skills directory so the agent picks up the tool automatically. Claude Code example:
+
+```bash
+cp -r skills/hs-deck ~/.claude/skills/hs-deck
+```
+
 ## Usage
 
 ```bash
