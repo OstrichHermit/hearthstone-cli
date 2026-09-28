@@ -31,10 +31,12 @@ Requirements: Python 3.10+ (Windows / macOS / Linux)
 ```bash
 git clone https://github.com/OstrichHermit/hs-deck-cli.git
 cd hs-deck-cli
-python hs_deck.py --help
+pip install .
 ```
 
-Optional: drop `hs` / `hs.cmd` wrappers into a PATH directory to make it a global command.
+For development use `pip install -e .` (edits take effect immediately). PyPI release: coming soon.
+
+Data lives by default in `~/.hs-deck-cli/` (card database, deck library, rendered images); override with the `HS_DECK_HOME` environment variable. Run `hs update` once after installing to fetch the card database.
 
 ## Usage
 
@@ -95,7 +97,7 @@ Validation errors are itemized line by line so an agent can fix the deck mechani
 
 ## Standard pool maintenance
 
-The whitelist lives at the top of `hs_deck.py` (`STANDARD_SETS`). When a new expansion drops: run `hs update`, add the new set code, then `hs check` your library.
+The whitelist lives in `src/hs_deck_cli/deck.py` (`STANDARD_SETS`). When a new expansion drops: run `hs update`, add the new set code, then `hs check` your library.
 
 ## Data source
 

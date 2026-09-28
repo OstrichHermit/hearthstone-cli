@@ -22,6 +22,8 @@ deck.json 格式:
     "cards": {"斩杀": 2, "#7": 1},       # 卡名或 #dbfId -> 数量
     "sideboard": {"owner": "乐队经理精英牛头人酋长", "cards": {"某卡": 3}}  # 可选
   }
+
+数据目录: ~/.hs-deck-cli (卡牌库/卡组库/卡组图, 可用环境变量 HS_DECK_HOME 覆盖)
 """
 import base64
 import json
@@ -35,7 +37,17 @@ import urllib.request
 from collections import defaultdict
 from pathlib import Path
 
-BASE = Path(__file__).resolve().parent
+def _data_home():
+    """数据根目录: 环境变量 HS_DECK_HOME > ~/.hs-deck-cli; 首次运行自动建目录"""
+    env = os.environ.get("HS_DECK_HOME")
+    root = Path(env).expanduser() if env else Path.home() / ".hs-deck-cli"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "decks").mkdir(parents=True, exist_ok=True)
+    (root / "image").mkdir(parents=True, exist_ok=True)
+    return root
+
+
+BASE = _data_home()
 DB_PATH = BASE / "cards_zh.json"
 DB_EN_PATH = BASE / "cards_en.json"
 DB_URL = "https://api.hearthstonejson.com/v1/latest/zhCN/cards.collectible.json"

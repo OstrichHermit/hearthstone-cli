@@ -10,3 +10,8 @@ image/
 
 __pycache__/
 *.pyc
+
+# Build artifacts
+*.egg-info/
+build/
+dist/

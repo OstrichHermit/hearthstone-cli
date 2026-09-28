@@ -31,10 +31,12 @@ A command-line deck building tool for Hearthstone designed for AI agents — val
 ```bash
 git clone https://github.com/OstrichHermit/hs-deck-cli.git
 cd hs-deck-cli
-python hs_deck.py --help
+pip install .
 ```
 
-可选：把 `hs` / `hs.cmd` 包装器放进 PATH 目录，即可作为全局命令使用。
+开发模式用 `pip install -e .`（改动源码即时生效）。PyPI 发布：Coming soon。
+
+数据目录默认 `~/.hs-deck-cli/`（卡牌库、卡组库、卡组图都存这里），可用环境变量 `HS_DECK_HOME` 覆盖。装好后先跑一次 `hs update` 下载卡牌库。
 
 ## 用法
 
@@ -95,7 +97,7 @@ hs image my-deck --name=龟甲防战 --name-en=Turtle Warrior
 
 ## 标准池维护
 
-标准池白名单在脚本头部 `STANDARD_SETS`。新版本上线后：跑 `hs update`，把新系列代码加进去，再 `hs check` 体检卡组库。
+标准池白名单在源码 `src/hs_deck_cli/deck.py` 里的 `STANDARD_SETS`。新版本上线后：跑 `hs update`，把新系列代码加进去，再 `hs check` 体检卡组库。
 
 ## 数据源
 
