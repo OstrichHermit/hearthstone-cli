@@ -38,6 +38,14 @@ pip install .
 
 数据目录默认 `~/.hs-deck-cli/`（卡牌库、卡组库、卡组图都存这里），可用环境变量 `HS_DECK_HOME` 覆盖。装好后先跑一次 `hs update` 下载卡牌库。
 
+### 安装为 Agent Skill（可选）
+
+仓库内附带 Agent Skill（`skills/hs-deck/SKILL.md`），把它复制到你所用 AI Agent 的 skills 目录，Agent 即可自动掌握本工具的用法。以 Claude Code 为例：
+
+```bash
+cp -r skills/hs-deck ~/.claude/skills/hs-deck
+```
+
 ## 用法
 
 ```bash
