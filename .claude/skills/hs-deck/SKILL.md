@@ -9,9 +9,10 @@ description: 炉石传说组卡命令行工具 hs 的使用方式——筛卡、
 
 ## 环境与入口
 
-- 全局命令 `hs`；实体 `D:\AgentWorkspace\hs-deck-cli\hs_deck.py`（`bin\` 下 `hs` / `hs.cmd` 双包装器指向它，bash 与 PowerShell 通用）
-- 数据同目录：`cards_zh.json` / `cards_en.json`（双语卡牌库）、`decks\`（卡组库存档）、`image\`（卡组图默认输出）
-- 命令不可用时回退：`python "D:\AgentWorkspace\hs-deck-cli\hs_deck.py" <子命令>`（Python 3.10+；克隆仓库场景直接 `python hs_deck.py`）
+- 全局命令 `hs`（标准 Python 包 hs-deck-cli，`pip install -e D:\AgentWorkspace\hs-deck-cli` 安装，入口 exe 在 Python314\Scripts\hs.exe）
+- git-bash 通道：PATH 无 Python Scripts 目录时走 `D:\AgentWorkspace\bin\hs`（转发 hs.exe）
+- 数据目录：`~/.hs-deck-cli\`（含 `cards_zh.json` / `cards_en.json` 双语卡牌库、`decks\` 卡组库存档、`image\` 卡组图默认输出），可用环境变量 `HS_DECK_HOME` 自定义
+- 仓库本地路径 `D:\AgentWorkspace\hs-deck-cli\`（src 布局，源码在 `src/hs_deck_cli/deck.py`）
 - 卡牌库缺失或补丁后先 `hs update` 刷新（从 HearthstoneJSON 下载中英全卡库，需联网）
 
 ## 常用命令
@@ -54,13 +55,13 @@ hs image <名字或代码> [选项]           # 生成卡组长图 PNG
 ## 卡组图（hs image）
 
 - 2x 渲染 1520px 宽，含法力曲线、稀有度配色、职业徽记、英雄与卡组代码；默认同名卡逐张列出
-- 默认输出到 `image\` 目录；`--lang=both` 一次出中英两版
+- 默认输出到数据目录的 `image\`（`~/.hs-deck-cli\image`）；`--lang=both` 一次出中英两版
 - 标准卡组含非标准卡时默认拦截不出图——正确做法是修卡组，`--force` 只在明确要看非标准卡组时用
 - 依赖本机 Chrome/Edge 无头渲染（自动探测，可用环境变量 `CHROME_PATH` 指定）
 
 ## 标准池维护（补丁日例行）
 
-新版本上线后：`hs update` 刷新卡库 → 把新系列 set 代码加进脚本头部 `STANDARD_SETS` → `hs check` 体检卡组库（退环境卡逐条列出）。CORE_HIDDEN 数据假象已剔除，旧核心卡不会误判为标准可用。
+新版本上线后：`hs update` 刷新卡库 → 把新系列 set 代码加进 `src/hs_deck_cli/deck.py` 头部 `STANDARD_SETS` → `hs check` 体检卡组库（退环境卡逐条列出）。CORE_HIDDEN 数据假象已剔除，旧核心卡不会误判为标准可用。
 
 ## 注意
 
