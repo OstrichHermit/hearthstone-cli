@@ -22,6 +22,10 @@ A command-line deck building tool for Hearthstone designed for AI agents — val
 - **对 Agent 友好** — 纯 JSON 输入、报错逐条列出便于自我修正、无任何交互式提示
 - **本地双语卡牌库** — 中英双语卡牌数据源自 [HearthstoneJSON](https://hearthstonejson.com/)，补丁日一条命令刷新
 
+## 持续维护
+
+本项目处于活跃维护状态：炉石每个新版本（扩展包 / 平衡补丁）上线后，会同步更新本地标准卡牌库与标准池白名单，卡组体检随版本跟进。若数据源变更导致问题，欢迎提 issue。
+
 ## 安装
 
 要求：Python 3.10+（Windows / macOS / Linux）

@@ -22,6 +22,10 @@ Human deck builders are GUI simulators: drag cards, watch the mana curve. An age
 - **Agent-friendly** — plain-JSON input, itemized error output for precise self-correction, zero interactive prompts
 - **Local card database** — zhCN + enUS data from [HearthstoneJSON](https://hearthstonejson.com/), refreshed with one command on patch day
 
+## Actively maintained
+
+This project is actively maintained: with every Hearthstone patch (expansion or balance update), the local card database and the Standard-pool whitelist are updated in sync, and deck health checks follow each patch cycle. If an upstream data change breaks something, please open an issue.
+
 ## Install
 
 Requirements: Python 3.10+ (Windows / macOS / Linux)
