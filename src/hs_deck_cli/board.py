@@ -509,8 +509,10 @@ def _card_name(lookup, card_id, ent=None):
 
 
 def _plain_text(html):
-    """卡牌 HTML 描述 -> 纯文本 (去标签 + 压缩空白)"""
-    return " ".join(re.sub(r"<[^>]+>", "", html or "").split())
+    """卡牌 HTML 描述 -> 纯文本 (去标签 + 取 @ 升级段第一段 + 占位符转X + 压缩空白)"""
+    text = (html or "").split("@")[0]  # 多阶段升级卡 text 用 @ 拼接多份, 取第一段
+    text = re.sub(r"\{\d+\}", "X", text)  # {0} 等动态数值占位符
+    return " ".join(re.sub(r"<[^>]+>", "", text).split())
 
 
 def _ev_desc(lookup, game, eid, limit=48):
@@ -657,7 +659,15 @@ def _single_event_text(lookup, game, me, opp, ev):
     if ev["type"] == "power":
         return f"英雄技能 {_ev_name(lookup, game, eid, '未知技能')}"
     if ev["type"] == "summon":
-        return f"召唤 {_ev_name(lookup, game, eid) or '未知随从'}"
+        name = _ev_name(lookup, game, eid) or "未知随从"
+        m = game["entities"].get(eid)
+        body = f"召唤 {name}"
+        if m and _ctype(m) == "MINION":
+            body += f" {_tag_int(m, 'ATK')}/{_tag_int(m, 'HEALTH') or m['peak_hp']}"
+        desc = _ev_desc(lookup, game, eid)
+        if desc:
+            body += f"<{desc}>"
+        return body
     if ev["type"] == "bounce":
         return f"回手 {_ev_name(lookup, game, eid, '未知卡牌')}"
     if ev["type"] == "equip":
