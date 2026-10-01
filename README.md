@@ -90,10 +90,6 @@ hs board
 hs board --log=D:\games\Hearthstone\Logs\Power.log   # 指定日志路径（也可指向日志目录自动发现）
 hs board --player=鸵鸟居士                            # 自动判定我方不准时手动指定
 
-# 提取我方卡组清单（名称/费用/类型/描述，换牌阶段学习卡组构成用；--no-text 省略描述）
-hs decklist
-hs decklist --log=D:\games\Hearthstone\Logs\Power.log --player=鸵鸟居士
-
 # 军师监听：换牌阶段/轮到我方回合时，向 IM 桥接器 POST 提示词触发 AI 分析
 hs watch start --channel=<Discord频道ID> --token=<桥接器token>   # 默认 --log=auto 自动发现
 hs watch status                                      # 查看运行状态与最近触发事件
@@ -151,7 +147,6 @@ hs watch stop
 
 `hs board` 从日志里最后一个 `CREATE_GAME` 起全量重放 packet，输出最终状态面板，适合直接喂给 AI 分析。我方默认按"手牌可见方"自动判定（只有客户端本人能看到手牌内容），判不准时用 `--player=玩家名` 手动指定；也支持 `--stdin` 从管道读日志，方便测试。输出末尾附最近行动回顾（双方上回合出牌/攻击/技能/抽弃牌事件流，`--events=N` 调整条数，`--events=0` 关闭），其中双方打出的牌附效果描述（截断 48 字符），AI 无需查库即可理解新卡。
 
-`hs decklist` 提取我方整套卡组清单（名称/费用/类型/效果描述，按费用排序），供 AI 在换牌阶段学习卡组构成、后续回合给更精准的建议。卡组随对局推进逐步揭示（未抽到的牌在日志里全程隐藏），数量按稀有度封顶（传说1/其余2）；`--no-text` 省略描述，`--log/--stdin/--player` 与 `hs board` 一致。
 
 `hs watch start` 启动一个后台守护进程 tail Power.log，检测到换牌阶段或轮到我方回合时，向自建 IM 桥接器 `POST /api/external/message`（Bearer token 鉴权）注入固定提示词，由桥接器触发 Discord 军师频道的 AI 分析。说明：
 

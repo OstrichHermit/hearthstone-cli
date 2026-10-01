@@ -1,6 +1,6 @@
 ---
 name: hs-deck
-description: 炉石传说组卡命令行工具 hs 的使用方式——筛卡、编解码卡组代码（deckstring）、校验 deck.json、卡组库存档与版本体检、生成可分享的卡组长图、解析 Power.log 输出对局面板与我方卡组清单、监听对局触发 AI 军师。当用户要组卡、校验/解码卡组、查卡、生成卡组图、看对局面板/对局分析、提取卡组清单/学卡组构成，或提到炉石组卡器、hs 命令、hs-deck-cli、deckstring、卡组代码、hs board、hs decklist、hs watch 时使用此 skill。
+description: 炉石传说组卡命令行工具 hs 的使用方式——筛卡、编解码卡组代码（deckstring）、校验 deck.json、卡组库存档与版本体检、生成可分享的卡组长图、解析 Power.log 输出对局面板、监听对局触发 AI 军师。当用户要组卡、校验/解码卡组、查卡、生成卡组图、看对局面板/对局分析，或提到炉石组卡器、hs 命令、hs-deck-cli、deckstring、卡组代码、hs board、hs watch 时使用此 skill。
 ---
 
 # 炉石组卡器（hs）
@@ -29,7 +29,6 @@ hs check [名字]                       # 体检存档卡组（省略名字 = �
 hs fetch <URL>                        # 抓网页里的卡组代码（只打印，不入库）
 hs image <名字或代码> [选项]           # 生成卡组长图 PNG
 hs board [--log=路径|--stdin] [--player=名字]  # 解析 Power.log 输出当前对局面板
-hs decklist [--log=路径|--stdin] [--player=名字] [--no-text]  # 提取我方卡组清单（换牌学卡组用）
 hs watch start/stop/status             # 军师监听：换牌/我方回合时 POST 提示词到 IM 桥接器
 ```
 
@@ -65,7 +64,6 @@ hs watch start/stop/status             # 军师监听：换牌/我方回合时 P
 ## 对局面板与军师监听（hs board / hs watch）
 
 - `hs board` 解析炉石客户端日志 Power.log（默认自动发现最新日志：游戏目录 `Logs\Hearthstone_*\Power.log` 与 `%LOCALAPPDATA%` 标准目录都扫，可 `--log=` 指定文件或目录，或 `--stdin` 管道读），从最后一个 CREATE_GAME 全量重放，输出结构化面板：回合/法力、双方英雄血甲、场面随从带状态标签、我方手牌费用攻血、对手牌库疲劳；我方按"手牌可见方"自动判定，不准时 `--player=玩家名` 手动指定；输出末尾附最近行动回顾（双方上回合出牌/攻击/技能/抽弃牌事件流，`--events=N` 调整条数，`--events=0` 关闭），双方打出的牌附效果描述（截断 48 字符）
-- `hs decklist` 提取我方整套卡组清单（名称/费用/类型/效果描述，按费用排序，数量按稀有度封顶），供 AI 在换牌阶段学习卡组构成；卡组随对局推进逐步揭示（未抽到的牌日志里全程隐藏），`--no-text` 省略描述，`--log/--stdin/--player` 与 `hs board` 一致
 - `hs watch start/stop/status`：后台守护进程 tail Power.log，检测到换牌阶段或轮到我方回合时，向自建 IM 桥接器 `POST /api/external/message` 注入固定提示词，触发 Discord 军师频道 AI 分析（工作原理一句话：检测回合 → POST 提示词 → 桥接器触发 AI）
 - 桥接器是私有组件（默认 `http://127.0.0.1:8088`，Bearer token 鉴权），不在本仓库；`hs watch` 单独使用只监听不发送，POST 失败重试 3 次后继续监听
 - 配置 merge 存 `~/.hs-deck-cli/watch_config.json`，不带参 `start` 沿用上次配置；`--force` 强制重启；`status --events=N` 看最近触发；提示词用 `--mulligan-prompt=` / `--turn-prompt=` 自定义

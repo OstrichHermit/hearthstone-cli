@@ -17,8 +17,6 @@
   board   [--log=Power.log路径] [--stdin] [--player=玩家名]
                                       解析炉石客户端日志 Power.log, 输出当前对局面板 (供 AI 军师分析)
                                       默认读 %LOCALAPPDATA%\\Blizzard\\Hearthstone\\Logs\\Power.log, --stdin 从管道读
-  decklist [--log=Power.log路径] [--stdin] [--player=玩家名] [--no-text]
-                                      从日志提取我方卡组清单 (名称/费用/类型/描述, 换牌期学习卡组构成用)
   watch   start [--channel=ID] [--url=URL] [--token=TOKEN] [--log=路径] [--force]
                                       启动军师监听守护进程 (tail Power.log, 换牌/我方回合时 POST 提示词到 IM 桥接器)
           stop / status               停止监听 / 查看状态与最近触发事件 (status 可加 --events=N)
@@ -932,9 +930,6 @@ def main():
     elif cmd == "board":
         from hs_deck_cli import board as _board
         _board.cmd_board(rest)
-    elif cmd == "decklist":
-        from hs_deck_cli import board as _board
-        _board.cmd_decklist(rest)
     elif cmd == "watch":
         from hs_deck_cli.watch_worker import cmd_watch
         cmd_watch(rest)
