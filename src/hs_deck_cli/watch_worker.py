@@ -214,6 +214,7 @@ def tail_loop(power_path, ctx):
                 latest = board.find_latest_power(auto_dir if isinstance(auto_dir, Path) else None)
                 if latest != power_path:
                     power_path = latest
+                    ctx["power_path"] = latest  # _handle 读的是 ctx, 切换必须同步
                     if f:
                         f.close()
                         f = None
