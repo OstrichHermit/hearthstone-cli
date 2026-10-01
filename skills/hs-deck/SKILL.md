@@ -63,7 +63,7 @@ hs watch start/stop/status             # 军师监听：换牌/我方回合时 P
 
 ## 对局面板与军师监听（hs board / hs watch）
 
-- `hs board` 解析炉石客户端日志 Power.log（默认自动发现最新日志：游戏目录 `Logs\Hearthstone_*\Power.log` 与 `%LOCALAPPDATA%` 标准目录都扫，可 `--log=` 指定文件或目录，或 `--stdin` 管道读），从最后一个 CREATE_GAME 全量重放，输出结构化面板：回合/法力、双方英雄血甲、场面随从带状态标签、我方手牌费用攻血、对手手牌数与双方疲劳；我方按"手牌可见方"自动判定，不准时 `--player=玩家名` 手动指定；输出末尾附最近行动回顾（双方上回合出牌/攻击/技能/抽弃牌/回手事件流，`--events=N` 调整条数，`--events=0` 关闭），双方打出的牌与召唤物附效果描述（截断 48 字符），对方抽牌只报张数不报卡名
+- `hs board` 解析炉石客户端日志 Power.log（默认自动发现最新日志：游戏目录 `Logs\Hearthstone_*\Power.log` 与 `%LOCALAPPDATA%` 标准目录都扫，可 `--log=` 指定文件或目录，或 `--stdin` 管道读），从最后一个 CREATE_GAME 全量重放，输出结构化面板：回合/法力、双方英雄血甲、场面随从带状态标签、我方手牌费用攻血、对手手牌数与双方疲劳；我方按"手牌可见方"自动判定，不准时 `--player=玩家名` 手动指定；输出末尾附行动回顾，按回合边界自动带最近三个回合（我方上回合全部+对方上回合全部+我方本回合已发生，`--events=N` 调整回合数，`--events=0` 关闭）；效果描述（截断 48 字符）跟着牌的入场走：我方随抽牌给出（起手发牌/换牌重抽记为"开局"），对方随打出的牌给出，召唤物双方都附，对方抽牌只报张数不报卡名；换牌阶段面板同样输出开局发牌，可直接给留牌建议
 - `hs watch start/stop/status`：后台守护进程 tail Power.log，检测到换牌阶段或轮到我方回合时，向自建 IM 桥接器 `POST /api/external/message` 注入固定提示词，触发 Discord 军师频道 AI 分析（工作原理一句话：检测回合 → POST 提示词 → 桥接器触发 AI）
 - 桥接器是私有组件（默认 `http://127.0.0.1:8088`，Bearer token 鉴权），不在本仓库；`hs watch` 单独使用只监听不发送，POST 失败重试 3 次后继续监听
 - 配置 merge 存 `~/.hearthstone-cli/watch_config.json`，不带参 `start` 沿用上次配置；`--force` 强制重启；`status --events=N` 看最近触发；提示词用 `--mulligan-prompt=` / `--turn-prompt=` 自定义
