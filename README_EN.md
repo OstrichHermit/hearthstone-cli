@@ -90,6 +90,10 @@ hs board
 hs board --log=D:\games\Hearthstone\Logs\Power.log   # explicit log path (a dir also works: auto-discover)
 hs board --player=鸵鸟居士                            # pin your player name if auto-detect is unsure
 
+# Extract your deck list (name/cost/type/text, for learning the deck during mulligan; --no-text omits descriptions)
+hs decklist
+hs decklist --log=D:\games\Hearthstone\Logs\Power.log --player=鸵鸟居士
+
 # Advisor watcher: POST a prompt to the IM bridge on mulligan / your turns to trigger AI analysis
 hs watch start --channel=<Discord channel ID> --token=<bridge token>   # --log=auto by default
 hs watch status                                      # running state + recent trigger events
@@ -145,7 +149,9 @@ Validation errors are itemized line by line so an agent can fix the deck mechani
 
 ## Game board & advisor watcher (board / watch)
 
-`hs board` replays every packet from the last `CREATE_GAME` in the log and prints the final state panel, ready to be fed to an AI. Your side is auto-detected as the player whose hand is visible (only the local client sees its own hand); pin it with `--player=<name>` if unsure. `--stdin` reads the log from a pipe for testing. Each panel ends with a recap of recent actions — a stream of both sides' latest plays, attacks, hero powers and draw/discard events (`--events=N` to change the number of lines, `--events=0` to hide it).
+`hs board` replays every packet from the last `CREATE_GAME` in the log and prints the final state panel, ready to be fed to an AI. Your side is auto-detected as the player whose hand is visible (only the local client sees its own hand); pin it with `--player=<name>` if unsure. `--stdin` reads the log from a pipe for testing. Each panel ends with a recap of recent actions — a stream of both sides' latest plays, attacks, hero powers and draw/discard events (`--events=N` to change the number of lines, `--events=0` to hide it); played cards carry their effect text (truncated to 48 chars) so the AI can understand unfamiliar cards without a db lookup.
+
+`hs decklist` extracts your full deck list (name/cost/type/effect text, sorted by cost) so an AI advisor can learn the deck during the mulligan and give sharper suggestions later. The deck is revealed progressively as the game goes on (undrawn cards stay hidden in the log); counts are capped by rarity (1 for legendaries, 2 otherwise). `--no-text` omits descriptions; `--log/--stdin/--player` behave the same as `hs board`.
 
 `hs watch start` runs a background daemon that tails Power.log; on the mulligan phase and on your turns it POSTs a fixed prompt to a self-hosted IM bridge (`POST /api/external/message`, Bearer-token auth), which then triggers AI advisor analysis in a Discord channel. Notes:
 
