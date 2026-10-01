@@ -70,7 +70,7 @@ GAME_ENTITY_RE = re.compile(r"^GameEntity EntityID=(\d+)\s*$")
 PLAYER_ENTITY_RE = re.compile(r"^Player EntityID=(\d+) PlayerID=(\d+)")
 SHOW_ENTITY_RE = re.compile(r"^SHOW_ENTITY - Updating (?:Entity=)?(.+) CardID=(\S*)\s*$")
 HIDE_ENTITY_RE = re.compile(r"^HIDE_ENTITY - Entity=(.+?)(?: tag=(\S+) value=(.+?)\s*)?$")
-TAG_CHANGE_RE = re.compile(r"^TAG_CHANGE Entity=(.+) tag=(\S+) value=(.+?)\s*$")
+TAG_CHANGE_RE = re.compile(r"^TAG_CHANGE Entity=(.+) tag=(\S+) value=(.*?)\s*$")  # value 允许为空 (新版日志有 value= 空值行)
 CHANGE_ENTITY_RE = re.compile(r"^CHANGE_ENTITY - Updating (?:Entity=)?(.+) CardID=(\S*)\s*$")
 BRACKET_ID_RE = re.compile(r"\b[Ii][Dd]=(\d+)")  # 方括号引用大小写 id= 都有
 ENTITY_NAME_RE = re.compile(r"entityName=(.*?) [Ii][Dd]=")
@@ -235,9 +235,13 @@ def _watch_tag(game, ent, tag, value, old_zone, old_exh):
         game["gate"] = True
         return
     if tag == "CURRENT_PLAYER" and _ctype(ent) == "PLAYER":
-        if _num(value) == 1:  # 兜底开闸: 覆盖无换牌流程的对局
-            game["gate"] = True
-            game["actor"] = ent["controller"] if ent["controller"] is not None else (_tag_int(ent, "PLAYER_ID") or None)
+        if _num(value) == 1:
+            mull = _norm(ent["tags"].get("MULLIGAN_STATE", ""), MULLIGAN_BY_NUM)
+            # 换牌流程内也会写 CURRENT_PLAYER (先手标记), 必须等该玩家换牌 DONE 才开闸
+            # (无 MULLIGAN_STATE tag 的对局视为无换牌流程, 直接开闸兜底)
+            if mull == "DONE" or "MULLIGAN_STATE" not in ent["tags"]:
+                game["gate"] = True
+                game["actor"] = ent["controller"] if ent["controller"] is not None else (_tag_int(ent, "PLAYER_ID") or None)
         return
     if not game["gate"]:
         return
@@ -440,6 +444,26 @@ def _of_side(game, controller, zone, ctype):
 
 def _in_zone(game, controller, zone):
     return [e for e in game["entities"].values() if e["controller"] == controller and e["zone"] == zone]
+
+
+DECK_SIZE = 30  # 标准/休闲构筑固定 30 张
+
+
+def _deck_count(game, controller):
+    """逻辑牌库数 = 30 - 手牌 - 场面(随从/武器/地标/奥秘) - 坟场。
+
+    日志 DECK 区实体含换牌塞回的额外实体, 直接数会虚高, 故用减法推算;
+    非卡组对象 (英雄/技能/附魔/代币游戏实体) 不计入。"""
+    used = 0
+    for e in game["entities"].values():
+        if e["controller"] != controller:
+            continue
+        ct = _ctype(e)
+        if ct in ("HERO", "HERO_POWER", "GAME", "PLAYER", "ENCHANTMENT"):
+            continue
+        if e["zone"] in ("HAND", "PLAY", "SECRET", "GRAVEYARD"):
+            used += 1
+    return max(0, DECK_SIZE - used)
 
 
 def _playstate(ent):
@@ -722,7 +746,11 @@ def render_panel(game, start_line, total, lookup, class_names, player_arg=None, 
     else:
         owner = "未知"
     mana = _mana_line(game, me, mulligan)
-    head = f"回合 {turn} | {owner}"
+    # 新版日志 GameEntity 的 TURN 是双方合计手数, 玩家自己的 TURN tag 才是"第 N 回合"
+    if turn and me and _tag_int(me, "TURN"):
+        head = f"总第 {turn} 手 | 我方第 {_tag_int(me, 'TURN')} 回合 | {owner}"
+    else:
+        head = f"回合 {turn} | {owner}"
     if mana:
         head += f" | {mana}"
     out.append(head)
@@ -732,7 +760,7 @@ def render_panel(game, start_line, total, lookup, class_names, player_arg=None, 
         pname = _player_name(p)
         name = label or pname
         cls = _side_class(lookup, class_names, next(iter(_of_side(game, ctl, "PLAY", "HERO")), None))
-        deck = len(_in_zone(game, ctl, "DECK"))
+        deck = _deck_count(game, ctl)
         fatigue = _tag_int(p, "FATIGUE")
         stat = f"手牌 {len(_in_zone(game, ctl, 'HAND'))} " if label != "我方" else ""
         out.append(f"{name}：{pname}（{cls}）{stat}牌库 {deck} 疲劳 {fatigue}" if label
