@@ -31,7 +31,7 @@ Repository = "https://github.com/OstrichHermit/hearthstone-cli"
 Issues = "https://github.com/OstrichHermit/hearthstone-cli/issues"
 
 [project.scripts]
-hs = "hs_deck_cli.deck:main"
+hs = "hearthstone_cli.deck:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

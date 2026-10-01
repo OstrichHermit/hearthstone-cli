@@ -158,7 +158,7 @@ hs watch stop
 
 ## 标准池维护
 
-标准池白名单在源码 `src/hs_deck_cli/deck.py` 里的 `STANDARD_SETS`。新版本上线后：跑 `hs update`，把新系列代码加进去，再 `hs check` 体检卡组库。
+标准池白名单在源码 `src/hearthstone_cli/deck.py` 里的 `STANDARD_SETS`。新版本上线后：跑 `hs update`，把新系列代码加进去，再 `hs check` 体检卡组库。
 
 ## 数据源
 
