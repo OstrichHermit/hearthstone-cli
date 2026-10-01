@@ -1,4 +1,4 @@
-# hs-deck-cli — Hearthstone Deck CLI for AI Agents
+# hearthstone-cli — Hearthstone Deck CLI for AI Agents
 
 **面向 AI Agent 的炉石传说组卡命令行工具 —— 校验、编码、解码、筛卡、卡组库存档与版本体检，另可解析客户端日志输出对局面板、监听对局触发 AI 军师分析。**
 
@@ -35,14 +35,14 @@ A command-line deck building tool for Hearthstone designed for AI agents — val
 `hs image` 另需本机安装 Chrome 或 Edge（自动探测，可用环境变量 `CHROME_PATH` 指定）。
 
 ```bash
-git clone https://github.com/OstrichHermit/hs-deck-cli.git
-cd hs-deck-cli
+git clone https://github.com/OstrichHermit/hearthstone-cli.git
+cd hearthstone-cli
 pip install .
 ```
 
 开发模式用 `pip install -e .`（改动源码即时生效）。PyPI 发布：Coming soon。
 
-数据目录默认 `~/.hs-deck-cli/`（卡牌库、卡组库、卡组图都存这里），可用环境变量 `HS_DECK_HOME` 覆盖。装好后先跑一次 `hs update` 下载卡牌库。
+数据目录默认 `~/.hearthstone-cli/`（卡牌库、卡组库、卡组图都存这里），可用环境变量 `HS_DECK_HOME` 覆盖。装好后先跑一次 `hs update` 下载卡牌库。
 
 ### 安装为 Agent Skill（可选）
 
@@ -145,7 +145,7 @@ hs watch stop
 
 ## 对局面板与军师监听（board / watch）
 
-> **`hs board` / `hs watch` 仍在开发中**：炉石日志格式随版本变动，变身/衍生物/回手等复杂对局效果的覆盖还在持续完善。解析报错或面板数据不对时，欢迎提 [issue](https://github.com/OstrichHermit/hs-deck-cli/issues) 或直接 PR，一起把它打磨好！
+> **`hs board` / `hs watch` 仍在开发中**：炉石日志格式随版本变动，变身/衍生物/回手等复杂对局效果的覆盖还在持续完善。解析报错或面板数据不对时，欢迎提 [issue](https://github.com/OstrichHermit/hearthstone-cli/issues) 或直接 PR，一起把它打磨好！
 
 `hs board` 从日志里最后一个 `CREATE_GAME` 起全量重放 packet，输出最终状态面板，适合直接喂给 AI 分析。我方默认按"手牌可见方"自动判定（只有客户端本人能看到手牌内容），判不准时用 `--player=玩家名` 手动指定；也支持 `--stdin` 从管道读日志，方便测试。输出末尾附最近行动回顾（双方上回合出牌/攻击/技能/抽弃牌事件流，`--events=N` 调整条数，`--events=0` 关闭），其中双方打出的牌与召唤物附效果描述（截断 48 字符），AI 无需查库即可理解新卡。
 
@@ -153,7 +153,7 @@ hs watch stop
 `hs watch start` 启动一个后台守护进程 tail Power.log，检测到换牌阶段或轮到我方回合时，向自建 IM 桥接器 `POST /api/external/message`（Bearer token 鉴权）注入固定提示词，由桥接器触发 Discord 军师频道的 AI 分析。说明：
 
 - **桥接器是私有组件，不在本仓库内**（默认 `http://127.0.0.1:8088`）。不配置或连不上桥接器时，`hs watch` 单独使用只监听不发送——POST 失败自动重试 3 次后继续监听，不会崩溃，触发事件可用 `hs watch status --events=N` 查看
-- 配置 merge 存于 `~/.hs-deck-cli/watch_config.json`，再次 `start` 不带参数沿用上次配置；`--force` 可在残留进程时强制重启
+- 配置 merge 存于 `~/.hearthstone-cli/watch_config.json`，再次 `start` 不带参数沿用上次配置；`--force` 可在残留进程时强制重启
 - 提示词可用 `--mulligan-prompt=` / `--turn-prompt=` 自定义，token 也可用环境变量 `HS_WATCH_TOKEN` 传入
 
 ## 标准池维护

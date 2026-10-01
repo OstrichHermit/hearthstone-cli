@@ -1,4 +1,4 @@
-# hs-deck-cli — Hearthstone Deck CLI for AI Agents
+# hearthstone-cli — Hearthstone Deck CLI for AI Agents
 
 A command-line deck building tool for Hearthstone designed for AI agents — validation, encoding, decoding, card filtering, deck archiving and patch-cycle health checks, plus in-game board parsing from client logs and a turn watcher that feeds an AI advisor.
 
@@ -35,14 +35,14 @@ Requirements: Python 3.10+ (Windows / macOS / Linux)
 `hs image` additionally needs Chrome or Edge installed locally (auto-detected; set `CHROME_PATH` to override).
 
 ```bash
-git clone https://github.com/OstrichHermit/hs-deck-cli.git
-cd hs-deck-cli
+git clone https://github.com/OstrichHermit/hearthstone-cli.git
+cd hearthstone-cli
 pip install .
 ```
 
 For development use `pip install -e .` (edits take effect immediately). PyPI release: coming soon.
 
-Data lives by default in `~/.hs-deck-cli/` (card database, deck library, rendered images); override with the `HS_DECK_HOME` environment variable. Run `hs update` once after installing to fetch the card database.
+Data lives by default in `~/.hearthstone-cli/` (card database, deck library, rendered images); override with the `HS_DECK_HOME` environment variable. Run `hs update` once after installing to fetch the card database.
 
 ### Install as an Agent Skill (optional)
 
@@ -145,7 +145,7 @@ Validation errors are itemized line by line so an agent can fix the deck mechani
 
 ## Game board & advisor watcher (board / watch)
 
-> **`hs board` / `hs watch` are under active development**: the Hearthstone log format shifts with each patch, and coverage of complex in-game effects (transforms, tokens, bounce, ...) keeps expanding. If you hit a parse error or odd panel data, please open an [issue](https://github.com/OstrichHermit/hs-deck-cli/issues) or send a PR — all help welcome!
+> **`hs board` / `hs watch` are under active development**: the Hearthstone log format shifts with each patch, and coverage of complex in-game effects (transforms, tokens, bounce, ...) keeps expanding. If you hit a parse error or odd panel data, please open an [issue](https://github.com/OstrichHermit/hearthstone-cli/issues) or send a PR — all help welcome!
 
 `hs board` replays every packet from the last `CREATE_GAME` in the log and prints the final state panel, ready to be fed to an AI. Your side is auto-detected as the player whose hand is visible (only the local client sees its own hand); pin it with `--player=<name>` if unsure. `--stdin` reads the log from a pipe for testing. Each panel ends with a recap of recent actions — a stream of both sides' latest plays, attacks, hero powers and draw/discard events (`--events=N` to change the number of lines, `--events=0` to hide it); played cards and summoned minions carry their effect text (truncated to 48 chars) so the AI can understand unfamiliar cards without a db lookup.
 
@@ -153,7 +153,7 @@ Validation errors are itemized line by line so an agent can fix the deck mechani
 `hs watch start` runs a background daemon that tails Power.log; on the mulligan phase and on your turns it POSTs a fixed prompt to a self-hosted IM bridge (`POST /api/external/message`, Bearer-token auth), which then triggers AI advisor analysis in a Discord channel. Notes:
 
 - **The bridge is a private component, not part of this repo** (default `http://127.0.0.1:8088`). On its own, `hs watch` only listens — it never sends anything without a reachable bridge. A failed POST is retried 3 times, then watching continues; recent triggers are visible via `hs watch status --events=N`
-- Config is merged into `~/.hs-deck-cli/watch_config.json`; a later `start` with no flags reuses the last config, and `--force` restarts over a stale process
+- Config is merged into `~/.hearthstone-cli/watch_config.json`; a later `start` with no flags reuses the last config, and `--force` restarts over a stale process
 - Prompts are customizable via `--mulligan-prompt=` / `--turn-prompt=`; the token can also come from the `HS_WATCH_TOKEN` environment variable
 
 ## Standard pool maintenance

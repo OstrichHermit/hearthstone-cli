@@ -6,7 +6,7 @@
   hs watch stop   [--config=路径]
   hs watch status [--config=路径] [--events=N]
 
-配置存 ~/.hs-deck-cli/watch_config.json (merge 语义, 不带参沿用上次配置);
+配置存 ~/.hearthstone-cli/watch_config.json (merge 语义, 不带参沿用上次配置);
 watch.log / watch.pid 与配置文件同目录 (便于 --config 测试隔离)。
 worker 本体: `python -m hs_deck_cli.watch_worker --config=...`, 标准库 only。
 """
@@ -26,7 +26,7 @@ DEFAULT_CHANNEL = "1477362651859255326"
 DEFAULT_TOKEN_ENV = "HS_WATCH_TOKEN"
 DEFAULT_MULLIGAN_PROMPT = "换牌阶段开始了，手牌已经亮出来了，帮我看看怎么留牌"
 DEFAULT_TURN_PROMPT = "轮到我的回合了，看看局面给我出个主意"
-DEFAULT_CONFIG = Path.home() / ".hs-deck-cli" / "watch_config.json"
+DEFAULT_CONFIG = Path.home() / ".hearthstone-cli" / "watch_config.json"
 POST_SOURCE = "hs-watch"
 POST_RETRIES = 3
 POST_RETRY_WAIT = 2
@@ -41,7 +41,7 @@ USAGE = """用法: hs watch start [--channel=ID] [--url=URL] [--token=TOKEN] [--
 
 --log 支持三种: "auto"(默认, 自动发现最新 Hearthstone_*/Power.log)、日志目录、具体 Power.log 文件路径。
 监听炉石 Power.log, 检测到换牌阶段/轮到我方回合时向 IM 桥接器 POST 提示词触发军师分析。
-配置 merge 保存于 ~/.hs-deck-cli/watch_config.json; 同目录生成 watch.log(运行日志) 与 watch.pid。"""
+配置 merge 保存于 ~/.hearthstone-cli/watch_config.json; 同目录生成 watch.log(运行日志) 与 watch.pid。"""
 
 
 # ---------- 配置 / PID ----------
