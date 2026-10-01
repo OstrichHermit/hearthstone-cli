@@ -512,6 +512,7 @@ def _plain_text(html):
     """卡牌 HTML 描述 -> 纯文本 (去标签 + 取 @ 升级段第一段 + 占位符转X + 压缩空白)"""
     text = (html or "").split("@")[0]  # 多阶段升级卡 text 用 @ 拼接多份, 取第一段
     text = re.sub(r"\{\d+\}", "X", text)  # {0} 等动态数值占位符
+    text = text.replace("$", "")  # $ 数值高亮标记, 游戏内渲染不显示
     return " ".join(re.sub(r"<[^>]+>", "", text).split())
 
 
