@@ -11,14 +11,14 @@ description: 炉石传说组卡命令行工具 hs 的使用方式——筛卡、
 
 - 全局命令 `hs`（标准 Python 包 hs-deck-cli，`pip install -e D:\AgentWorkspace\hs-deck-cli` 安装，入口 exe 在 Python314\Scripts\hs.exe）
 - git-bash 通道：PATH 无 Python Scripts 目录时走 `D:\AgentWorkspace\bin\hs`（转发 hs.exe）
-- 数据目录：`~/.hs-deck-cli\`（含 `cards_zh.json` / `cards_en.json` 双语卡牌库、`decks\` 卡组库存档、`image\` 卡组图默认输出），可用环境变量 `HS_DECK_HOME` 自定义
+- 数据目录：`~/.hs-deck-cli\`（含 `cards_zh.json` / `cards_en.json` 双语卡牌库、`cards_full_zh.json` 中文全量库（含英雄技能/token，供对局面板查名与描述）、`decks\` 卡组库存档、`image\` 卡组图默认输出），可用环境变量 `HS_DECK_HOME` 自定义
 - 仓库本地路径 `D:\AgentWorkspace\hs-deck-cli\`（src 布局，源码在 `src/hs_deck_cli/deck.py`）
-- 卡牌库缺失或补丁后先 `hs update` 刷新（从 HearthstoneJSON 下载中英全卡库，需联网）
+- 卡牌库缺失或补丁后先 `hs update` 刷新（从 HearthstoneJSON 下载中英 collectible 卡与中文全量库，需联网）
 
 ## 常用命令
 
 ```bash
-hs update                             # 刷新中英双语卡牌库
+hs update                             # 刷新中英双语卡牌库 + 中文全量库（技能/token）
 hs filter --class=战士 --set=CORE --cost='<=3' --text=嘲讽 --name=嘲讽
 hs decode 'AAECAQcGo6AE...'           # 解码卡组代码为卡牌清单
 hs validate deck.json                 # 校验卡组并输出卡组代码（stdin 传 -）
@@ -63,7 +63,7 @@ hs watch start/stop/status             # 军师监听：换牌/我方回合时 P
 
 ## 对局面板与军师监听（hs board / hs watch）
 
-- `hs board` 解析炉石客户端日志 Power.log（默认自动发现最新日志：游戏目录 `Logs\Hearthstone_*\Power.log` 与 `%LOCALAPPDATA%` 标准目录都扫，可 `--log=` 指定文件或目录，或 `--stdin` 管道读），从最后一个 CREATE_GAME 全量重放，输出结构化面板：回合/法力、双方英雄血甲、场面随从带状态标签、我方手牌费用攻血、对手牌库疲劳；我方按"手牌可见方"自动判定，不准时 `--player=玩家名` 手动指定；输出末尾附最近行动回顾（双方上回合出牌/攻击/技能/抽弃牌事件流，`--events=N` 调整条数，`--events=0` 关闭），双方打出的牌附效果描述（截断 48 字符）
+- `hs board` 解析炉石客户端日志 Power.log（默认自动发现最新日志：游戏目录 `Logs\Hearthstone_*\Power.log` 与 `%LOCALAPPDATA%` 标准目录都扫，可 `--log=` 指定文件或目录，或 `--stdin` 管道读），从最后一个 CREATE_GAME 全量重放，输出结构化面板：回合/法力、双方英雄血甲、场面随从带状态标签、我方手牌费用攻血、对手手牌数与双方疲劳；我方按"手牌可见方"自动判定，不准时 `--player=玩家名` 手动指定；输出末尾附最近行动回顾（双方上回合出牌/攻击/技能/抽弃牌/回手事件流，`--events=N` 调整条数，`--events=0` 关闭），双方打出的牌附效果描述（截断 48 字符），对方抽牌只报张数不报卡名
 - `hs watch start/stop/status`：后台守护进程 tail Power.log，检测到换牌阶段或轮到我方回合时，向自建 IM 桥接器 `POST /api/external/message` 注入固定提示词，触发 Discord 军师频道 AI 分析（工作原理一句话：检测回合 → POST 提示词 → 桥接器触发 AI）
 - 桥接器是私有组件（默认 `http://127.0.0.1:8088`，Bearer token 鉴权），不在本仓库；`hs watch` 单独使用只监听不发送，POST 失败重试 3 次后继续监听
 - 配置 merge 存 `~/.hs-deck-cli/watch_config.json`，不带参 `start` 沿用上次配置；`--force` 强制重启；`status --events=N` 看最近触发；提示词用 `--mulligan-prompt=` / `--turn-prompt=` 自定义

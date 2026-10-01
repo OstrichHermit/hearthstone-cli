@@ -76,7 +76,8 @@ BRACKET_ID_RE = re.compile(r"\b[Ii][Dd]=(\d+)")  # 方括号引用大小写 id= 
 ENTITY_NAME_RE = re.compile(r"entityName=(.*?) [Ii][Dd]=")
 BLOCK_TYPE_RE = re.compile(r"^BLOCK_START BlockType=(\S+)")
 BLOCK_ENTITY_RE = re.compile(r" Entity=(.+?) EffectCardId=")
-BLOCK_TARGET_RE = re.compile(r" Target=(.+?)\s*$")
+# Target 值: 方括号实体引用 (内含空格) 或裸词 (后面还跟 SubOption= 等字段, 不能吞到行尾)
+BLOCK_TARGET_RE = re.compile(r" Target=(\[.*?\]|\S+)")
 
 # 日志里 tag value 可能是数字枚举也可能是字符串, 两种都归一化
 ZONE_BY_NUM = {1: "PLAY", 2: "DECK", 3: "HAND", 4: "GRAVEYARD", 5: "REMOVEDFROMGAME", 6: "SETASIDE", 7: "SECRET"}
@@ -120,8 +121,9 @@ def _norm(v, table):
 
 def _new_game():
     return {"entities": {}, "names": {}, "player_names": {}, "cur": None,
-            # 行动回顾重放上下文: turn=当前回合值, actor=当前行动方 controller, gate=换牌结束后开闸记事件
-            "turn": 0, "actor": None, "gate": False, "events": [], "blocks": []}
+            # 行动回顾重放上下文: turn=当前回合值, actor=当前行动方 controller, gate=换牌结束后开闸记事件,
+            # grace=开闸宽限期 (换牌残留的塞回/新抽移动不计正式抽牌, 首个正式回合开始时关闭)
+            "turn": 0, "actor": None, "gate": False, "grace": False, "events": [], "blocks": []}
 
 
 def _create_entity_by_id(game, eid, card_id, name="", zone=""):
@@ -230,10 +232,16 @@ def _watch_tag(game, ent, tag, value, old_zone, old_exh):
         n = _num(value)
         if n is not None:
             game["turn"] = n
+        game["grace"] = False  # TURN 变化兜底结束抽牌宽限期
+        return
+    if tag == "STEP" and _ctype(ent) == "GAME" and str(value) == "MAIN_READY":
+        # 首个正式回合开始 (MAIN_READY), 宽限期结束, 之后的 DECK->HAND 都是正式抽牌
+        game["grace"] = False
         return
     if tag == "MULLIGAN_STATE" and _norm(value, MULLIGAN_BY_NUM) == "DONE":
         # 唯一开闸点: 任一方换牌 DONE = 换牌流程结束 (先手先 DONE), 之后才是正式对局行动
         game["gate"] = True
+        game["grace"] = True  # 开闸宽限: 引擎才落盘的换牌塞回/新抽移动不算正式抽牌
         game["actor"] = ent["controller"] if ent["controller"] is not None else (_tag_int(ent, "PLAYER_ID") or None)
         return
     if tag == "CURRENT_PLAYER" and _ctype(ent) == "PLAYER":
@@ -260,7 +268,10 @@ def _zone_event(game, ent, old):
             target = top["target"]  # 出牌块的 Target 即法术/武器指向
         _record(game, "play", eid=ent["id"], ctype=ct, target_ref=target)
     elif old == "DECK" and new == "HAND":
-        _record(game, "draw", eid=ent["id"])
+        if not game["grace"]:  # 宽限期内 (换牌 DONE 后首个正式回合前) 的 DECK->HAND 是换牌残留, 不计
+            _record(game, "draw", eid=ent["id"])
+    elif old == "PLAY" and new == "HAND" and ct in PLAYABLE_TYPES:
+        _record(game, "bounce", eid=ent["id"])  # 被移回手牌 (对方亡语/法术效果), 不记则场面凭空少人
     elif old == "SETASIDE" and new == "PLAY":
         if ct == "MINION":
             _record(game, "summon", eid=ent["id"])
@@ -444,26 +455,6 @@ def _in_zone(game, controller, zone):
     return [e for e in game["entities"].values() if e["controller"] == controller and e["zone"] == zone]
 
 
-DECK_SIZE = 30  # 标准/休闲构筑固定 30 张
-
-
-def _deck_count(game, controller):
-    """逻辑牌库数 = 30 - 手牌 - 场面(随从/武器/地标/奥秘) - 坟场。
-
-    日志 DECK 区实体含换牌塞回的额外实体, 直接数会虚高, 故用减法推算;
-    非卡组对象 (英雄/技能/附魔/代币游戏实体) 不计入。"""
-    used = 0
-    for e in game["entities"].values():
-        if e["controller"] != controller:
-            continue
-        ct = _ctype(e)
-        if ct in ("HERO", "HERO_POWER", "GAME", "PLAYER", "ENCHANTMENT"):
-            continue
-        if e["zone"] in ("HAND", "PLAY", "SECRET", "GRAVEYARD"):
-            used += 1
-    return max(0, DECK_SIZE - used)
-
-
 def _playstate(ent):
     return _norm(ent["tags"].get("PLAYSTATE", ""), PLAYSTATE_BY_NUM)
 
@@ -609,7 +600,11 @@ def _ev_name(lookup, game, eid, fallback=""):
 
 def _ev_target(lookup, game, me, opp, ref):
     """实体引用 -> 目标名; 是某方英雄则显示 我方英雄/对方英雄"""
-    if not ref or ref == "0":
+    if not ref:
+        return None
+    ref = ref.strip()
+    # 0/-1 = 无目标; System.Collections... = 新版日志把内部类型串塞进 Target, 都不算目标
+    if ref in ("0", "-1") or ref.startswith("System.") or "`1[" in ref:
         return None
     eid = _ref_id(ref)
     ent = game["entities"].get(eid) if eid is not None else None
@@ -663,6 +658,8 @@ def _single_event_text(lookup, game, me, opp, ev):
         return f"英雄技能 {_ev_name(lookup, game, eid, '未知技能')}"
     if ev["type"] == "summon":
         return f"召唤 {_ev_name(lookup, game, eid) or '未知随从'}"
+    if ev["type"] == "bounce":
+        return f"回手 {_ev_name(lookup, game, eid, '未知卡牌')}"
     if ev["type"] == "equip":
         return f"装备武器 {_ev_name(lookup, game, eid) or '未知武器'}"
     if ev["type"] == "death":
@@ -673,6 +670,7 @@ def _single_event_text(lookup, game, me, opp, ev):
 def _event_lines(lookup, game, me, opp):
     """事件列表 -> [(回合, 行动方, 文本)]; 连续抽牌/弃牌/获得按段合并计数"""
     lines, evs, i = [], game["events"], 0
+    opp_ctl = opp["controller"] if opp else None
     n = len(evs)
     while i < n:
         ev = evs[i]
@@ -687,7 +685,10 @@ def _event_lines(lookup, game, me, opp):
                     unknown += 1
                 j += 1
             if et == "draw":
-                if len(names) == 1 and not unknown:
+                if opp_ctl is not None and actor == opp_ctl:
+                    # 对方抽牌一律匿名: 对方手牌内容本就不可知, 事后打出揭示的 cardId 不回填到抽牌事件
+                    lines.append((t, actor, f"抽牌 {len(names) + unknown} 张"))
+                elif len(names) == 1 and not unknown:
                     lines.append((t, actor, f"抽牌 {names[0]}"))
                 else:
                     body = f"抽牌 {len(names) + unknown} 张"
@@ -778,11 +779,11 @@ def render_panel(game, start_line, total, lookup, class_names, player_arg=None, 
         pname = _player_name(p)
         name = label or pname
         cls = _side_class(lookup, class_names, next(iter(_of_side(game, ctl, "PLAY", "HERO")), None))
-        deck = _deck_count(game, ctl)
         fatigue = _tag_int(p, "FATIGUE")
         stat = f"手牌 {len(_in_zone(game, ctl, 'HAND'))} " if label != "我方" else ""
-        out.append(f"{name}：{pname}（{cls}）{stat}牌库 {deck} 疲劳 {fatigue}" if label
-                   else f"{pname}（{cls}）手牌 {len(_in_zone(game, ctl, 'HAND'))} 牌库 {deck} 疲劳 {fatigue}")
+        # 不输出"牌库 N": 霍格复制传说等效果会让套牌超 30 张, 30 减法推算必不准, 干脆不给
+        out.append(f"{name}：{pname}（{cls}）{stat}疲劳 {fatigue}" if label
+                   else f"{pname}（{cls}）手牌 {len(_in_zone(game, ctl, 'HAND'))} 疲劳 {fatigue}")
         out.append(_hero_line(lookup, game, ctl))
         if not mulligan:  # 换牌阶段双方场面输出为空
             board = _board_rows(lookup, game, ctl)
@@ -830,8 +831,11 @@ def cmd_board(args):
         lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
 
     game, start_line, total = parse_power_log(lines)
-    from hs_deck_cli.deck import CLASS_NAMES, load_db  # 延迟导入避免循环依赖
+    from hs_deck_cli.deck import CLASS_NAMES, load_db, load_full_db  # 延迟导入避免循环依赖
     lookup = {c.get("id"): c for c in load_db()}
+    for cid, c in load_full_db().items():
+        # 全量库兜底 (英雄技能/token 等非 collectible): collectible 已有的条目不覆盖, 查卡顺序优先原库
+        lookup.setdefault(cid, c)
     print(render_panel(game, start_line, total, lookup, CLASS_NAMES, player, events_n=events_n))
 
 

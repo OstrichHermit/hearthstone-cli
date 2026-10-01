@@ -1,7 +1,7 @@
 """猪猪组卡器 — 面向 Agent 的炉石传说组卡工具
 
 子命令:
-  update                              从 HearthstoneJSON 刷新卡牌库 (中文+英文)
+  update                              从 HearthstoneJSON 刷新卡牌库 (中文+英文+中文全量)
   filter  [选项]                      筛卡 (--class/--set/--cost/--type/--text/--name)
   decode  <卡组代码>                  解码卡组代码为卡牌清单
   validate <deck.json>                校验卡组合法性并输出卡组代码 (stdin 用 -)
@@ -56,8 +56,10 @@ def _data_home():
 BASE = _data_home()
 DB_PATH = BASE / "cards_zh.json"
 DB_EN_PATH = BASE / "cards_en.json"
+DB_FULL_PATH = BASE / "cards_full_zh.json"  # 全量库: 含英雄技能/token 等非 collectible 卡
 DB_URL = "https://api.hearthstonejson.com/v1/latest/zhCN/cards.collectible.json"
 DB_URL_EN = "https://api.hearthstonejson.com/v1/latest/enUS/cards.collectible.json"
+DB_URL_FULL = "https://api.hearthstonejson.com/v1/latest/zhCN/cards.json"
 IMAGES_DIR = BASE / "image"
 
 CARD_TYPES = {"MINION", "SPELL", "WEAPON", "LOCATION", "HERO"}
@@ -106,6 +108,18 @@ def load_db_en():
     if not DB_EN_PATH.exists():
         sys.exit(f"英文卡牌库不存在: {DB_EN_PATH}，先运行 update 子命令")
     return json.loads(DB_EN_PATH.read_text(encoding="utf-8"))
+
+
+def load_full_db():
+    """全量卡牌库 (含英雄技能/皮肤/token 等): 懒加载 + 裁剪到 board 所需字段控制内存。
+
+    供 board 查技能/token 的名字与描述; 缺文件返回空 dict (hs update 前不阻塞面板)。"""
+    if not DB_FULL_PATH.exists():
+        return {}
+    raw = json.loads(DB_FULL_PATH.read_text(encoding="utf-8"))
+    return {c.get("id"): {"name": c.get("name") or "", "text": c.get("text") or "",
+                          "cost": c.get("cost"), "cardClass": c.get("cardClass") or ""}
+            for c in raw if c.get("id")}
 
 
 def playable(db):
@@ -206,10 +220,10 @@ def print_card(cost, name, cnt, dbf, t, set_=""):
 
 def cmd_update():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    for path, url in ((DB_PATH, DB_URL), (DB_EN_PATH, DB_URL_EN)):
+    for path, url in ((DB_PATH, DB_URL), (DB_EN_PATH, DB_URL_EN), (DB_FULL_PATH, DB_URL_FULL)):
         print("下载中...", url)
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with urllib.request.urlopen(req, timeout=120) as r:
             data = r.read()
         cards = json.loads(data)  # 完整性校验: 坏数据不落盘
         tmp = path.with_suffix(".json.tmp")
