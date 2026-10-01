@@ -232,16 +232,12 @@ def _watch_tag(game, ent, tag, value, old_zone, old_exh):
             game["turn"] = n
         return
     if tag == "MULLIGAN_STATE" and _norm(value, MULLIGAN_BY_NUM) == "DONE":
+        # 唯一开闸点: 任一方换牌 DONE = 换牌流程结束 (先手先 DONE), 之后才是正式对局行动
         game["gate"] = True
+        game["actor"] = ent["controller"] if ent["controller"] is not None else (_tag_int(ent, "PLAYER_ID") or None)
         return
     if tag == "CURRENT_PLAYER" and _ctype(ent) == "PLAYER":
-        if _num(value) == 1:
-            mull = _norm(ent["tags"].get("MULLIGAN_STATE", ""), MULLIGAN_BY_NUM)
-            # 换牌流程内也会写 CURRENT_PLAYER (先手标记), 必须等该玩家换牌 DONE 才开闸
-            # (无 MULLIGAN_STATE tag 的对局视为无换牌流程, 直接开闸兜底)
-            if mull == "DONE" or "MULLIGAN_STATE" not in ent["tags"]:
-                game["gate"] = True
-                game["actor"] = ent["controller"] if ent["controller"] is not None else (_tag_int(ent, "PLAYER_ID") or None)
+        # 不在此开闸: 换牌流程内也会写 CURRENT_PLAYER (先手标记), 会导致换牌抽牌被记成事件
         return
     if not game["gate"]:
         return
