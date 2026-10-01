@@ -85,13 +85,13 @@ hs image my-deck --lang=en                # English version (--lang=both renders
 hs image my-deck --merge                  # one row per distinct card
 hs image my-deck --name=龟甲防战 --name-en=Turtle Warrior
 
-# Parse the current game board (reads %LOCALAPPDATA%\Blizzard\Hearthstone\Logs\Power.log by default)
+# Parse the current game board (auto-discovers the latest log: Hearthstone_* subdirs under the game's Logs dir, plus the standard dir)
 hs board
-hs board --log=D:\games\Hearthstone\Logs\Power.log   # explicit log path
+hs board --log=D:\games\Hearthstone\Logs\Power.log   # explicit log path (a dir also works: auto-discover)
 hs board --player=鸵鸟居士                            # pin your player name if auto-detect is unsure
 
 # Advisor watcher: POST a prompt to the IM bridge on mulligan / your turns to trigger AI analysis
-hs watch start --channel=<Discord channel ID> --token=<bridge token>
+hs watch start --channel=<Discord channel ID> --token=<bridge token>   # --log=auto by default
 hs watch status                                      # running state + recent trigger events
 hs watch stop
 ```
