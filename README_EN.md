@@ -19,7 +19,7 @@ Human deck builders are GUI simulators: drag cards, watch the mana curve. An age
 - **Multiclass & Tourist** — respects `classes` arrays (e.g. Death Wing, Deathlord of the World shared by six classes) and the Perils in Paradise tourist rules: a Tourist unlocks only the destination class's cards *from that expansion*, one Tourist per deck, no nesting
 - **Deck library & health checks** — save decks locally, then `hs check` after every patch to see exactly which cards rotated out
 - **Deck image** — render any deck (library name or raw code) to a share-ready PNG, Chinese or English: mana curve, rarity-colored card rows (one row per card by default, `--merge` to combine duplicates), class sigil, hero and deck code; rendered at 2x (1520px wide). Uses local headless Chrome/Edge
-- **Game board** — parse the Hearthstone client log Power.log into a structured board panel: turn, mana, both heroes' HP/armor, board minions with status tags (taunt, divine shield, ...), your hand with cost/attack/health, opponent's hand size and deck/fatigue
+- **Game board** — parse the Hearthstone client log Power.log into a structured board panel: turn, mana, both heroes' HP/armor, board minions with status tags (taunt, divine shield, ...), your hand with cost/attack/health, opponent's hand size and both players' fatigue
 - **Advisor watcher** — `hs watch` tails Power.log in the background; on the mulligan phase and your turns it pushes a fixed prompt to a self-hosted IM bridge, triggering AI advisor analysis
 - **Agent-friendly** — plain-JSON input, itemized error output for precise self-correction, zero interactive prompts
 - **Local card database** — zhCN + enUS data from [HearthstoneJSON](https://hearthstonejson.com/), refreshed with one command on patch day
@@ -55,7 +55,7 @@ cp -r skills/hs-deck ~/.claude/skills/hs-deck
 ## Usage
 
 ```bash
-# Refresh the card databases (auto-downloads latest zhCN + enUS collectible json)
+# Refresh the card databases (auto-downloads latest zhCN + enUS collectible json plus the zhCN full json, which covers hero powers/tokens for the board panel)
 hs update
 
 # Filter cards
@@ -124,12 +124,12 @@ Validation errors are itemized line by line so an agent can fix the deck mechani
 ```
 === 炉石对局面板 ===
 回合 8 | 我的回合 | 我的法力 5/8（已用 3）
-对方：暴风城诗人（法师）手牌 4 牌库 18 疲劳 0
+对方：暴风城诗人（法师）手牌 4 疲劳 0
 英雄：吉安娜·普罗德摩尔 血 15/30 护甲 0 武器 无 技能 火焰冲击(未用)
 对方场面(2)：
   1. 卑劣的脏鼠 3/6 [嘲讽]
   2. 苦痛侍僧 1/3
-我方：鸵鸟居士（战士）牌库 22 疲劳 0
+我方：鸵鸟居士（战士）疲劳 0
 英雄：加尔鲁什·地狱咆哮 血 22/30 护甲 5 武器 无 技能 全副武装(未用)
 我方场面(3)：
   1. 铸甲师 1/4
