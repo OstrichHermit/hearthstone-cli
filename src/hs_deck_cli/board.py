@@ -18,18 +18,62 @@ from pathlib import Path
 
 DEFAULT_LOG = (Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
                / "Blizzard" / "Hearthstone" / "Logs" / "Power.log")
+# 日志根目录候选: 本机炉石把日志写在安装目录下(每次启动生成 Hearthstone_<时间戳> 子目录),
+# 标准位置 %LOCALAPPDATA%\Blizzard\Hearthstone\Logs 作为兜底
+DEFAULT_LOG_DIRS = [
+    Path(r"E:\Hearthstone\Logs"),
+    (Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+     / "Blizzard" / "Hearthstone" / "Logs"),
+]
+
+
+def find_latest_power(base_dir=None):
+    """自动发现最新 Power.log: 目录下直接存在, 或 Hearthstone_<时间戳> 子目录中, 取最新。
+
+    base_dir=None 时扫描 DEFAULT_LOG_DIRS 全部候选, 否则只扫指定目录。返回 Path 或 None。
+    """
+    bases = [Path(base_dir)] if base_dir else DEFAULT_LOG_DIRS
+    best, best_key = None, None
+    for b in bases:
+        if not b.is_dir():
+            continue
+        cands = []
+        direct = b / "Power.log"
+        if direct.is_file():
+            cands.append(direct)
+        try:
+            for d in b.iterdir():
+                if d.is_dir() and d.name.startswith("Hearthstone_"):
+                    f = d / "Power.log"
+                    if f.is_file():
+                        cands.append(f)
+        except OSError:
+            pass
+        for f in cands:
+            key = (f.parent.name, f.stat().st_mtime)  # 子目录名时间戳字典序=时间序, mtime 兜底
+            if best_key is None or key > best_key:
+                best, best_key = f, key
+    return best
 
 # 行前缀: 时间戳 D 21:47:52.3528941 GameState.DebugPrintPower() - <payload>
 PREFIX_RE = re.compile(r"^D [\d:.]+ GameState\.DebugPrintPower\(\) - (.*)$")
+# 玩家名行(新版日志): D ... GameState.DebugPrintGame() - PlayerID=2, PlayerName=鸵鸟居士#5869
+PLAYER_NAME_RE = re.compile(r"^D [\d:.]+ GameState\.DebugPrintGame\(\) - PlayerID=(\d+), PlayerName=(.+?)\s*$")
 TAG_LINE_RE = re.compile(r"^tag=(\S+) value=(.+?)\s*$")
 CREATE_GAME_RE = re.compile(r"^CREATE_GAME$")
+# 新版: FULL_ENTITY - Creating ID=4 CardID= (实体名/zone 不再内联, 由后续 tag 行填充)
+FULL_ENTITY_CREATE_RE = re.compile(r"^FULL_ENTITY - Creating ID=(\d+) CardID=(\S*)\s*$")
+# 旧版: FULL_ENTITY - Updating [entityName=.. ID=4 Zone=..] CardID=..
 FULL_ENTITY_RE = re.compile(r"^FULL_ENTITY - Updating (.+) CardID=(\S*)\s*$")
+# 新版: GameEntity EntityID=1 / Player EntityID=2 PlayerID=1 (名字只在 DebugPrintGame 行)
+GAME_ENTITY_RE = re.compile(r"^GameEntity EntityID=(\d+)\s*$")
+PLAYER_ENTITY_RE = re.compile(r"^Player EntityID=(\d+) PlayerID=(\d+)")
 SHOW_ENTITY_RE = re.compile(r"^SHOW_ENTITY - Updating (?:Entity=)?(.+) CardID=(\S*)\s*$")
 HIDE_ENTITY_RE = re.compile(r"^HIDE_ENTITY - Entity=(.+?)(?: tag=(\S+) value=(.+?)\s*)?$")
 TAG_CHANGE_RE = re.compile(r"^TAG_CHANGE Entity=(.+) tag=(\S+) value=(.+?)\s*$")
 CHANGE_ENTITY_RE = re.compile(r"^CHANGE_ENTITY - Updating (?:Entity=)?(.+) CardID=(\S*)\s*$")
-BRACKET_ID_RE = re.compile(r"\bID=(\d+)")
-ENTITY_NAME_RE = re.compile(r"entityName=(.*?) ID=")
+BRACKET_ID_RE = re.compile(r"\b[Ii][Dd]=(\d+)")  # 方括号引用大小写 id= 都有
+ENTITY_NAME_RE = re.compile(r"entityName=(.*?) [Ii][Dd]=")
 BLOCK_TYPE_RE = re.compile(r"^BLOCK_START BlockType=(\S+)")
 BLOCK_ENTITY_RE = re.compile(r" Entity=(.+?) EffectCardId=")
 BLOCK_TARGET_RE = re.compile(r" Target=(.+?)\s*$")
@@ -75,9 +119,19 @@ def _norm(v, table):
 
 
 def _new_game():
-    return {"entities": {}, "names": {}, "cur": None,
+    return {"entities": {}, "names": {}, "player_names": {}, "cur": None,
             # 行动回顾重放上下文: turn=当前回合值, actor=当前行动方 controller, gate=换牌结束后开闸记事件
             "turn": 0, "actor": None, "gate": False, "events": [], "blocks": []}
+
+
+def _create_entity_by_id(game, eid, card_id, name="", zone=""):
+    game["entities"][eid] = {
+        "id": eid, "cardId": card_id, "zone": zone, "zone_pos": 0,
+        "controller": None, "tags": {}, "name": name, "peak_hp": 0,
+    }
+    if name:
+        game["names"][name] = eid
+    return eid
 
 
 def _create_entity(game, ref, card_id):
@@ -90,16 +144,10 @@ def _create_entity(game, ref, card_id):
     if nm:
         name = nm.group(1)
     zone = ""
-    zm = re.search(r"\bZone=(\S+)", ref)
+    zm = re.search(r"\b[Zz]one=(\S+)", ref)
     if zm:
         zone = _norm(zm.group(1), ZONE_BY_NUM)
-    game["entities"][eid] = {
-        "id": eid, "cardId": card_id, "zone": zone, "zone_pos": 0,
-        "controller": None, "tags": {}, "name": name, "peak_hp": 0,
-    }
-    if name:
-        game["names"][name] = eid
-    return eid
+    return _create_entity_by_id(game, eid, card_id, name, zone)
 
 
 def _ref_id(ref):
@@ -115,13 +163,30 @@ def _ref_id(ref):
 
 
 def _resolve(game, ref):
-    """TAG_CHANGE/SHOW_ENTITY 的实体引用 -> entityID; 未知名字建占位实体避免丢 tag"""
+    """TAG_CHANGE/SHOW_ENTITY 的实体引用 -> entityID; 未知名字建占位实体避免丢 tag。
+
+    新版日志玩家名 (如 鸵鸟居士#5869) 引用要先对上真正的 Player 实体:
+    DebugPrintGame 行建立 PlayerID->名字映射, 此处按名字(含去 #后缀)反查绑定。
+    方括号引用内联的本地化卡名 (entityName=) 顺手挂到实体, 供渲染兜底。"""
     eid = _ref_id(ref)
     if eid is not None:
+        ent = game["entities"].get(eid)
+        if ent and not ent["name"]:
+            nm = ENTITY_NAME_RE.search(ref)
+            if nm:
+                ent["name"] = nm.group(1)
         return eid
     name = ref.strip()
     if name in game["names"]:
         return game["names"][name]
+    for pid, pname in game["player_names"].items():
+        if name == pname or name == pname.split("#")[0] or name.split("#")[0] == pname:
+            for p in _players(game):
+                if _tag_int(p, "PLAYER_ID") == pid:
+                    game["names"][name] = p["id"]
+                    if not p["name"]:
+                        p["name"] = pname
+                    return p["id"]
     eid = -len(game["entities"]) - 1
     game["entities"][eid] = {
         "id": eid, "cardId": "", "zone": "", "zone_pos": 0,
@@ -208,19 +273,132 @@ def _zone_event(game, ent, old):
         _record(game, "gain", eid=ent["id"])
 
 
+# 只有 Player 实体才有的 tag (新版日志对手真名经 TAG_CHANGE Entity=<名字> 揭晓, 用于归并)
+PLAYER_ONLY_TAGS = {"PLAYSTATE", "CURRENT_PLAYER", "MULLIGAN_STATE", "HERO_ENTITY", "TIMEOUT",
+                    "PLAYER_ID", "MAXHANDSIZE", "STARTHANDSIZE", "TEAM_ID", "MAXRESOURCES",
+                    "FIRST_PLAYER", "FATIGUE", "LAST_MSG_PLAYED"}
+
+
+def _handle_packet(game, payload):
+    """处理一条 packet 行 (CREATE_GAME 由外层处理); 顶格与块内缩进共用"""
+    m = GAME_ENTITY_RE.match(payload)
+    if m:
+        game["cur"] = _create_entity_by_id(game, int(m.group(1)), "", name="GameEntity")
+        return
+    m = PLAYER_ENTITY_RE.match(payload)
+    if m:
+        eid = _create_entity_by_id(game, int(m.group(1)), "")
+        game["entities"][eid]["tags"]["PLAYER_ID"] = m.group(2)
+        pname = game["player_names"].get(int(m.group(2)))
+        if pname and not pname.startswith("UNKNOWN HUMAN PLAYER"):  # 匿名占位不占名字位, 等真名归并
+            game["entities"][eid]["name"] = pname
+            game["names"][pname] = eid
+        game["cur"] = eid
+        return
+    m = FULL_ENTITY_CREATE_RE.match(payload)
+    if m:
+        game["cur"] = _create_entity_by_id(game, int(m.group(1)), m.group(2))
+        return
+    m = FULL_ENTITY_RE.match(payload)
+    if m:
+        game["cur"] = _create_entity(game, m.group(1), m.group(2))
+        return
+    m = SHOW_ENTITY_RE.match(payload)
+    if m:
+        eid = _resolve(game, m.group(1))
+        ent = game["entities"].get(eid)
+        if ent:
+            ent["cardId"] = m.group(2)
+        game["cur"] = eid
+        return
+    m = HIDE_ENTITY_RE.match(payload)
+    if m:
+        eid = _resolve(game, m.group(1))
+        ent = game["entities"].get(eid)
+        if ent:
+            ent["cardId"] = ""
+        if m.group(2):
+            _apply_tag(game, eid, m.group(2), m.group(3) or "")
+        game["cur"] = eid
+        return
+    m = TAG_CHANGE_RE.match(payload)
+    if m:
+        ref, tag, val = m.group(1), m.group(2), m.group(3)
+        eid = _resolve(game, ref)
+        ent = game["entities"].get(eid)
+        if ent and eid < 0 and tag in PLAYER_ONLY_TAGS:
+            # 匿名占位 (UNKNOWN HUMAN PLAYER) 或无名 Player 都算待归并, 真名到来时覆盖
+            unnamed = [p for p in _players(game)
+                       if not p["name"] or p["name"] == "UNKNOWN HUMAN PLAYER"]
+            if len(unnamed) == 1:  # 唯一待归并 Player -> 真名归并
+                p = unnamed[0]
+                game["names"][ent["name"]] = p["id"]
+                p["name"] = ent["name"]
+                del game["entities"][eid]
+                eid = p["id"]
+        _apply_tag(game, eid, tag, val)
+        return
+    m = CHANGE_ENTITY_RE.match(payload)
+    if m:
+        eid = _resolve(game, m.group(1))
+        ent = game["entities"].get(eid)
+        if ent:
+            ent["cardId"] = m.group(2)
+        game["cur"] = eid
+        return
+    if payload[:11] == "BLOCK_START":
+        # 块结构只用于事件归属: 压栈记录; cur 置空, 块参数 tag (PROPOSED_*/SCRIPT_DATA 等) 不误挂实体
+        game["cur"] = None
+        bt = BLOCK_TYPE_RE.match(payload)
+        btype = bt.group(1) if bt else ""
+        ent_m = BLOCK_ENTITY_RE.search(payload)
+        tgt_m = BLOCK_TARGET_RE.search(payload)
+        game["blocks"].append({"type": btype, "entity": ent_m.group(1) if ent_m else None,
+                               "target": tgt_m.group(1) if tgt_m else None})
+        if btype == "ATTACK" and game["gate"]:
+            _record(game, "attack", atk_ref=ent_m.group(1) if ent_m else "",
+                    tgt_ref=tgt_m.group(1) if tgt_m else "")
+        return
+    if payload[:9] == "BLOCK_END" and game["blocks"]:
+        game["blocks"].pop()
+        game["cur"] = None
+        return
+    # META_DATA 等: 最终状态重放不需要, 忽略
+
+
 def parse_power_log(lines):
     """从最后一个 CREATE_GAME 起重放 packet 流 -> (game|None, 起始行, 总行数)"""
     game, start_line, total = None, 0, 0
     for lineno, raw in enumerate(lines, 1):
         total = lineno
-        m = PREFIX_RE.match(raw.rstrip("\r\n"))
+        line = raw.rstrip("\r\n")
+        nm = PLAYER_NAME_RE.match(line)  # DebugPrintGame 玩家名行 (无 Power 前缀)
+        if nm:
+            if game is not None:
+                pid, pname = int(nm.group(1)), nm.group(2).strip()
+                game["player_names"][pid] = pname
+                for p in _players(game):  # 名字迟到时补绑: 已占位的名字引用重定向到真身
+                    if _tag_int(p, "PLAYER_ID") == pid:
+                        p["name"] = p["name"] or pname
+                        game["names"][pname] = p["id"]
+                        break
+            continue
+        m = PREFIX_RE.match(line)
         if not m:
             continue  # 非 GameState.DebugPrintPower 行 (含 PowerTaskList 重复历史) 直接忽略
         payload = m.group(1)
         if payload[:1] in (" ", "\t"):
-            t = TAG_LINE_RE.match(payload.strip())
-            if t and game and game["cur"] is not None:
-                _apply_tag(game, game["cur"], t.group(1), t.group(2))
+            stripped = payload.strip()
+            t = TAG_LINE_RE.match(stripped)
+            if t:
+                if game and game["cur"] is not None:
+                    _apply_tag(game, game["cur"], t.group(1), t.group(2))
+                continue
+            # 新版日志块内 packet 也带缩进 (TAG_CHANGE/SHOW_ENTITY/GameEntity/Player...)
+            if game is None:
+                continue
+            game["cur"] = None
+            _handle_packet(game, stripped)
             continue
         if game:
             game["cur"] = None
@@ -229,56 +407,8 @@ def parse_power_log(lines):
             continue
         if game is None:
             continue
-        m = FULL_ENTITY_RE.match(payload)
-        if m:
-            game["cur"] = _create_entity(game, m.group(1), m.group(2))
-            continue
-        m = SHOW_ENTITY_RE.match(payload)
-        if m:
-            eid = _resolve(game, m.group(1))
-            ent = game["entities"].get(eid)
-            if ent:
-                ent["cardId"] = m.group(2)
-            game["cur"] = eid
-            continue
-        m = HIDE_ENTITY_RE.match(payload)
-        if m:
-            eid = _resolve(game, m.group(1))
-            ent = game["entities"].get(eid)
-            if ent:
-                ent["cardId"] = ""
-            if m.group(2):
-                _apply_tag(game, eid, m.group(2), m.group(3) or "")
-            game["cur"] = eid
-            continue
-        m = TAG_CHANGE_RE.match(payload)
-        if m:
-            _apply_tag(game, _resolve(game, m.group(1)), m.group(2), m.group(3))
-            continue
-        m = CHANGE_ENTITY_RE.match(payload)
-        if m:
-            eid = _resolve(game, m.group(1))
-            ent = game["entities"].get(eid)
-            if ent:
-                ent["cardId"] = m.group(2)
-            game["cur"] = eid
-            continue
-        if payload[:11] == "BLOCK_START":
-            # 块结构只用于事件归属: 压栈记录, 不设 cur, 嵌套 tag 不会误挂实体
-            bt = BLOCK_TYPE_RE.match(payload)
-            btype = bt.group(1) if bt else ""
-            ent_m = BLOCK_ENTITY_RE.search(payload)
-            tgt_m = BLOCK_TARGET_RE.search(payload)
-            game["blocks"].append({"type": btype, "entity": ent_m.group(1) if ent_m else None,
-                                   "target": tgt_m.group(1) if tgt_m else None})
-            if btype == "ATTACK" and game["gate"]:
-                _record(game, "attack", atk_ref=ent_m.group(1) if ent_m else "",
-                        tgt_ref=tgt_m.group(1) if tgt_m else "")
-            continue
-        if payload[:9] == "BLOCK_END" and game["blocks"]:
-            game["blocks"].pop()
-            continue
-        # META_DATA 等: 最终状态重放不需要, 忽略
+        game["cur"] = None
+        _handle_packet(game, payload)
     return game, start_line, total
 
 
@@ -333,7 +463,7 @@ def detect_me(game, player_arg=None):
     players = _players(game)
     if player_arg:
         for p in players:
-            if p["name"] == player_arg:
+            if p["name"] == player_arg or (p["name"] or "").split("#")[0] == player_arg:
                 other = [x for x in players if x is not p]
                 return p, (other[0] if other else None), False
         sys.exit(f"找不到玩家: {player_arg} (现有: {'、'.join(_player_name(p) for p in players)})")
@@ -351,11 +481,17 @@ def detect_me(game, player_arg=None):
     return (None, None, True)
 
 
-def _card_name(lookup, card_id):
+def _card_name(lookup, card_id, ent=None):
     if not card_id:
         return "未知卡牌"
     c = lookup.get(card_id)
-    return c["name"] if c and c.get("name") else HERO_POWER_NAMES.get(card_id, card_id)
+    if c and c.get("name"):
+        return c["name"]
+    if card_id in HERO_POWER_NAMES:
+        return HERO_POWER_NAMES[card_id]
+    if ent and ent.get("name"):  # 日志方括号引用里的本地化名 (新卡/token 不在卡牌库时的兜底)
+        return ent["name"]
+    return card_id
 
 
 def _side_class(lookup, class_names, ent):
@@ -372,10 +508,10 @@ def _hero_line(lookup, game, controller):
     armor = _tag_int(hero, "ARMOR")
     weapon = next(iter(_of_side(game, controller, "PLAY", "WEAPON")), None)
     power = next(iter(_of_side(game, controller, "PLAY", "HERO_POWER")), None)
-    wname = _card_name(lookup, weapon["cardId"]) if weapon else "无"
-    pname = _card_name(lookup, power["cardId"]) if power else "无"
+    wname = _card_name(lookup, weapon["cardId"], weapon) if weapon else "无"
+    pname = _card_name(lookup, power["cardId"], power) if power else "无"
     pstate = "已用" if power and _tag_int(power, "EXHAUSTED") == 1 else "未用"
-    return f"英雄：{_card_name(lookup, hero['cardId'])} 血 {hp}/{max_hp} 护甲 {armor} 武器 {wname} 技能 {pname}({pstate})"
+    return f"英雄：{_card_name(lookup, hero["cardId"], hero)} 血 {hp}/{max_hp} 护甲 {armor} 武器 {wname} 技能 {pname}({pstate})"
 
 
 def _minion_tags(ent):
@@ -395,7 +531,7 @@ def _board_rows(lookup, game, controller):
     rows = []
     for i, m in enumerate(_of_side(game, controller, "PLAY", "MINION"), 1):
         hp = _tag_int(m, "HEALTH") or m["peak_hp"]
-        rows.append(f"  {i}. {_card_name(lookup, m['cardId'])} {_tag_int(m, 'ATK')}/{hp} {_minion_tags(m)}".rstrip())
+        rows.append(f"  {i}. {_card_name(lookup, m["cardId"], m)} {_tag_int(m, 'ATK')}/{hp} {_minion_tags(m)}".rstrip())
     return rows
 
 
@@ -408,7 +544,7 @@ def _hand_rows(lookup, game, controller):
         if cost is None:
             cost = c.get("cost") if c and c.get("cost") is not None else 0
         ctype = TYPE_ZH.get(_ctype(h), _ctype(h) or "未知")
-        body = f"{_card_name(lookup, h['cardId'])} {cost}费"
+        body = f"{_card_name(lookup, h["cardId"], h)} {cost}费"
         if _ctype(h) == "MINION":
             body += f" {_tag_int(h, 'ATK')}/{_tag_int(h, 'HEALTH') or h['peak_hp']}"
         rows.append(f"  {i}. {body} {ctype}")
@@ -416,7 +552,8 @@ def _hand_rows(lookup, game, controller):
 
 
 def _player_name(p):
-    return p["name"] or f"玩家{_tag_int(p, 'PLAYER_ID')}"
+    name = p["name"] or f"玩家{_tag_int(p, 'PLAYER_ID')}"
+    return name.split("#")[0]  # 战网名 鸵鸟居士#5869 -> 鸵鸟居士
 
 
 # ---------- 行动回顾渲染 ----------
@@ -426,7 +563,7 @@ def _ev_name(lookup, game, eid, fallback=""):
     ent = game["entities"].get(eid) if eid is not None else None
     if ent:
         if ent["cardId"]:
-            return _card_name(lookup, ent["cardId"])
+            return _card_name(lookup, ent["cardId"], ent)
         if ent["name"] and not ent["name"].startswith("UNKNOWN"):
             return ent["name"]
     return fallback
@@ -641,9 +778,10 @@ def cmd_board(args):
     if use_stdin:
         lines = sys.stdin.buffer.read().decode("utf-8", "replace").splitlines()
     else:
-        p = Path(log_path) if log_path else DEFAULT_LOG
-        if not p.exists():
-            sys.exit(f"日志不存在: {p} (可用 --log=路径 指定, 或 --stdin 从管道读入)")
+        p = Path(log_path) if log_path else find_latest_power()
+        if not p or not p.is_file():
+            sys.exit(f"未找到 Power.log (已扫描候选目录: {'; '.join(str(d) for d in DEFAULT_LOG_DIRS)})"
+                     f"\n可用 --log=路径 指定, 或 --stdin 从管道读入")
         lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
 
     game, start_line, total = parse_power_log(lines)

@@ -85,13 +85,13 @@ hs image my-deck --lang=en                # 英文版（--lang=both 一次出中
 hs image my-deck --merge                  # 同名卡合并为一行
 hs image my-deck --name=龟甲防战 --name-en=Turtle Warrior
 
-# 解析当前对局面板（默认读 %LOCALAPPDATA%\Blizzard\Hearthstone\Logs\Power.log）
+# 解析当前对局面板（默认自动发现最新日志：游戏目录 Logs 下 Hearthstone_* 子目录及标准目录）
 hs board
-hs board --log=D:\games\Hearthstone\Logs\Power.log   # 指定日志路径
+hs board --log=D:\games\Hearthstone\Logs\Power.log   # 指定日志路径（也可指向日志目录自动发现）
 hs board --player=鸵鸟居士                            # 自动判定我方不准时手动指定
 
 # 军师监听：换牌阶段/轮到我方回合时，向 IM 桥接器 POST 提示词触发 AI 分析
-hs watch start --channel=<Discord频道ID> --token=<桥接器token>
+hs watch start --channel=<Discord频道ID> --token=<桥接器token>   # 默认 --log=auto 自动发现
 hs watch status                                      # 查看运行状态与最近触发事件
 hs watch stop
 ```

@@ -34,11 +34,12 @@ BRIDGE_PATH = "/api/external/message"
 # 触发词: 行内出现即唤醒解析 (轻量预筛, 真正判定靠 board.parse_power_log 全量重放)
 TRIGGERS = ("CURRENT_PLAYER", "MULLIGAN_STATE")
 
-USAGE = """用法: hs watch start [--channel=ID] [--url=URL] [--token=TOKEN] [--log=Power.log路径]
+USAGE = """用法: hs watch start [--channel=ID] [--url=URL] [--token=TOKEN] [--log=路径]
                      [--mulligan-prompt=文本] [--turn-prompt=文本] [--config=路径] [--force]
       hs watch stop   [--config=路径]
       hs watch status [--config=路径] [--events=N]
 
+--log 支持三种: "auto"(默认, 自动发现最新 Hearthstone_*/Power.log)、日志目录、具体 Power.log 文件路径。
 监听炉石 Power.log, 检测到换牌阶段/轮到我方回合时向 IM 桥接器 POST 提示词触发军师分析。
 配置 merge 保存于 ~/.hs-deck-cli/watch_config.json; 同目录生成 watch.log(运行日志) 与 watch.pid。"""
 
@@ -195,10 +196,26 @@ def _handle(ctx):
 
 
 def tail_loop(power_path, ctx):
+    """auto_dir 模式: None=固定文件; "auto"=扫描默认候选目录; Path=扫描指定目录。
+
+    目录模式下每次轮询重新发现最新 Hearthstone_*/Power.log, 切换目标时重置防抖并从头读
+    (新文件错过了开头就无法重放对局)。"""
+    auto_dir = ctx.get("auto_dir")
     f, last_ino, last_size = None, None, -1
     while True:
         try:
-            if not power_path.exists():  # 炉石未开, 静默等待
+            if auto_dir is not None:
+                latest = board.find_latest_power(auto_dir if isinstance(auto_dir, Path) else None)
+                if latest != power_path:
+                    power_path = latest
+                    if f:
+                        f.close()
+                        f = None
+                    ctx["seen"].clear()
+                    ctx["last_start"] = None
+                    if power_path:
+                        ctx["log"]("INFO", f"目标切换为 {power_path}")
+            if power_path is None or not power_path.exists():  # 炉石未开, 静默等待
                 if f:
                     f.close()
                     f = None
@@ -207,9 +224,15 @@ def tail_loop(power_path, ctx):
             st = power_path.stat()
             if f is None:
                 f = open(power_path, "r", encoding="utf-8", errors="replace")
-                f.seek(0, os.SEEK_END)  # 首次只看新增, 不处理历史
+                if auto_dir is not None and time.time() - st.st_mtime <= 60:
+                    # 目录模式且文件新鲜 (本局刚生成): 从头读全量, 换牌阶段在文件开头不能错过
+                    f.seek(0)
+                    ctx["log"]("INFO", f"开始监听 {power_path} (新文件从头读全量, size={st.st_size})")
+                else:
+                    # 固定文件模式首次, 或目录模式发现的是上一场残留的旧日志: 只看新增
+                    f.seek(0, os.SEEK_END)
+                    ctx["log"]("INFO", f"开始监听 {power_path} (seek 末尾, size={st.st_size})")
                 last_ino, last_size = st.st_ino, st.st_size
-                ctx["log"]("INFO", f"开始监听 {power_path} (seek 末尾, size={st.st_size})")
             elif st.st_ino != last_ino or st.st_size < last_size:
                 # 炉石重启: 日志清空重写 -> 重置 tail 与防抖状态
                 f.close()
@@ -256,9 +279,20 @@ def worker_main(argv=None):
             pass
 
     token = (cfg.get("token") or os.environ.get(DEFAULT_TOKEN_ENV) or "").strip()
-    power = Path(cfg.get("log") or str(board.DEFAULT_LOG)).expanduser()
+    log_setting = (cfg.get("log") or "").strip()
+    if log_setting.lower().endswith(".log"):
+        power, auto_dir = Path(log_setting).expanduser(), None  # 显式文件模式
+    elif log_setting and log_setting != "auto":
+        power, auto_dir = None, Path(log_setting).expanduser()  # 指定目录模式
+    else:
+        power, auto_dir = None, "auto"  # 默认候选目录模式
+    if power is None:
+        power = board.find_latest_power(auto_dir if isinstance(auto_dir, Path) else None) or board.DEFAULT_LOG
+    mode_txt = {"auto": "自动发现(默认候选)", str(auto_dir): f"目录发现({auto_dir})"}.get(
+        str(auto_dir), "") or "固定文件"
     ctx = {
         "power_path": power,
+        "auto_dir": auto_dir,
         "url": cfg.get("url") or DEFAULT_URL,
         "channel_id": cfg.get("channel_id") or DEFAULT_CHANNEL,
         "token": token,
@@ -268,7 +302,8 @@ def worker_main(argv=None):
         "last_start": None,  # 当前对局起始行
         "log": log,
     }
-    log("INFO", f"watch_worker 启动 pid={os.getpid()} log={power} url={ctx['url']} token={'有' if token else '空'}")
+    log("INFO", f"watch_worker 启动 pid={os.getpid()} mode={mode_txt} log={power} "
+                f"url={ctx['url']} token={'有' if token else '空'}")
     tail_loop(power, ctx)
 
 
@@ -302,13 +337,22 @@ def _mask(tok):
     return (tok[:4] + "****") if len(tok) > 8 else "****"
 
 
+def _log_desc(cfg):
+    v = (cfg.get("log") or "").strip()
+    if v == "auto":
+        return f"自动发现 (默认候选: {'; '.join(str(d) for d in board.DEFAULT_LOG_DIRS)})"
+    if v and not v.lower().endswith(".log"):
+        return f"目录发现 ({v})"
+    return v or str(board.DEFAULT_LOG)
+
+
 def _print_summary(cfg, pid, cfg_path):
     print(f"  PID       : {pid}")
     print(f"  配置文件  : {cfg_path}")
     print(f"  桥接地址  : {cfg.get('url') or DEFAULT_URL}")
     print(f"  频道 ID   : {cfg.get('channel_id') or DEFAULT_CHANNEL}")
     print(f"  Token     : {_mask(cfg.get('token'))}")
-    print(f"  监听日志  : {cfg.get('log') or board.DEFAULT_LOG}")
+    print(f"  监听日志  : {_log_desc(cfg)}")
     print(f"  换牌提示词: {cfg.get('mulligan_prompt') or DEFAULT_MULLIGAN_PROMPT}")
     print(f"  回合提示词: {cfg.get('turn_prompt') or DEFAULT_TURN_PROMPT}")
 
@@ -331,7 +375,7 @@ def _watch_start(argv):
     if "turn-prompt" in o:
         cfg["turn_prompt"] = o["turn-prompt"]
     if not cfg.get("log"):
-        cfg["log"] = str(board.DEFAULT_LOG)
+        cfg["log"] = "auto"  # 自动发现: E:\Hearthstone\Logs(Hearthstone_* 子目录) 及标准目录
     _save_json(cfg_path, cfg)
 
     pid_path = cfg_path.parent / "watch.pid"
