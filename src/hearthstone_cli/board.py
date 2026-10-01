@@ -5,11 +5,11 @@
   hs board --log=D:\\path\\Power.log  指定日志路径
   hs board --stdin                  从 stdin 读日志 (方便测试)
   hs board --player=鸵鸟居士         手动指定我方玩家名 (默认自动判定)
-  hs board --events=12              行动回顾条数 (默认 12, N=0 完全不输出)
+  hs board --events=N               行动回顾带最近 N 个回合 (默认 3, N=0 完全不输出)
 
 只认 GameState.DebugPrintPower() 行 (PowerTaskList 是重复历史, 忽略)。
 从最后一个 CREATE_GAME 起全量重放 packet, tag 原子覆盖, 输出最终状态面板;
-重放时同步收集 (TURN, 当前行动方) 行动段内的出牌/攻击/技能/抽弃牌事件, 供"行动回顾"输出。
+重放时同步收集行动事件 (出牌/攻击/技能/抽弃牌; 起手发牌与换牌重抽记为开局回合), 供"行动回顾"输出。
 """
 import os
 import re
@@ -122,8 +122,9 @@ def _norm(v, table):
 def _new_game():
     return {"entities": {}, "names": {}, "player_names": {}, "cur": None,
             # 行动回顾重放上下文: turn=当前回合值, actor=当前行动方 controller, gate=换牌结束后开闸记事件,
-            # grace=开闸宽限期 (换牌残留的塞回/新抽移动不计正式抽牌, 首个正式回合开始时关闭)
-            "turn": 0, "actor": None, "gate": False, "grace": False, "events": [], "blocks": []}
+            # grace=开闸宽限期 (换牌重抽归入开局事件, 首个正式回合开始时关闭), opening_seen=开局发牌去重
+            "turn": 0, "actor": None, "gate": False, "grace": False, "events": [], "blocks": [],
+            "opening_seen": set()}
 
 
 def _create_entity_by_id(game, eid, card_id, name="", zone=""):
@@ -221,9 +222,19 @@ def _apply_tag(game, eid, tag, value):
     _watch_tag(game, ent, tag, value, old_zone, old_exh)
 
 
-def _record(game, etype, **kw):
-    """记一条事件, 快照当时的回合值与行动方"""
-    game["events"].append({"type": etype, "turn": game["turn"], "actor": game["actor"], **kw})
+def _record(game, etype, turn=None, actor=None, **kw):
+    """记一条事件, 快照当时的回合值与行动方 (turn/actor 显式传入时覆盖)"""
+    game["events"].append({"type": etype,
+                           "turn": game["turn"] if turn is None else turn,
+                           "actor": game["actor"] if actor is None else actor, **kw})
+
+
+def _record_opening(game, ent):
+    """起手发牌/换牌重抽 -> 开局抽牌事件 (同实体去重, 回合记 0 渲染为"开局")"""
+    if ent["id"] in game["opening_seen"]:
+        return
+    game["opening_seen"].add(ent["id"])
+    _record(game, "draw", eid=ent["id"], turn=0, actor=ent["controller"])
 
 
 def _watch_tag(game, ent, tag, value, old_zone, old_exh):
@@ -250,6 +261,8 @@ def _watch_tag(game, ent, tag, value, old_zone, old_exh):
             game["actor"] = ent["controller"] if ent["controller"] is not None else (_tag_int(ent, "PLAYER_ID") or None)
         return
     if not game["gate"]:
+        if tag == "ZONE":
+            _zone_event(game, ent, old_zone)  # 开闸前只可能命中 DECK->HAND 白名单 (起手发牌)
         return
     if tag == "ZONE":
         _zone_event(game, ent, old_zone)
@@ -261,15 +274,20 @@ def _watch_tag(game, ent, tag, value, old_zone, old_exh):
 def _zone_event(game, ent, old):
     """区域迁移 -> 事件 (只认白名单迁移, SETASIDE/REMOVEDFROMGAME 间挪动等噪音天然过滤)"""
     new, ct = ent["zone"], _ctype(ent)
+    if old == "DECK" and new == "HAND":
+        if not game["gate"] or game["grace"]:
+            _record_opening(game, ent)  # 起手发牌/换牌重抽 -> 开局事件 (换牌塞回不在此白名单)
+        else:
+            _record(game, "draw", eid=ent["id"])
+        return
+    if not game["gate"]:
+        return
     if old == "HAND" and new == "PLAY" and ct in PLAYABLE_TYPES:
         target = None
         top = game["blocks"][-1] if game["blocks"] else None
         if top and top["type"] == "PLAY" and _ref_id(top["entity"] or "") == ent["id"]:
             target = top["target"]  # 出牌块的 Target 即法术/武器指向
         _record(game, "play", eid=ent["id"], ctype=ct, target_ref=target)
-    elif old == "DECK" and new == "HAND":
-        if not game["grace"]:  # 宽限期内 (换牌 DONE 后首个正式回合前) 的 DECK->HAND 是换牌残留, 不计
-            _record(game, "draw", eid=ent["id"])
     elif old == "PLAY" and new == "HAND" and ct in PLAYABLE_TYPES:
         _record(game, "bounce", eid=ent["id"])  # 被移回手牌 (对方亡语/法术效果), 不记则场面凭空少人
     elif old == "SETASIDE" and new == "PLAY":
@@ -322,6 +340,9 @@ def _handle_packet(game, payload):
         ent = game["entities"].get(eid)
         if ent:
             ent["cardId"] = m.group(2)
+            # 起手直接建在手牌区的卡 (后手整手/幸运币) 没有区域迁移, 靠揭示时机记开局发牌
+            if (not game["gate"] or game["grace"]) and ent["zone"] == "HAND" and ent["cardId"]:
+                _record_opening(game, ent)
         game["cur"] = eid
         return
     m = HIDE_ENTITY_RE.match(payload)
@@ -644,7 +665,9 @@ def _single_event_text(lookup, game, me, opp, ev):
         m = game["entities"].get(eid)
         if ct == "MINION" and m:
             body += f"{_tag_int(m, 'ATK')}/{_tag_int(m, 'HEALTH') or m['peak_hp']}"
-        desc = _ev_desc(lookup, game, eid)
+        desc = ""
+        if not (me and ev.get("actor") == me["controller"]):  # 我方牌描述已在抽牌时给过, 打出只补对方
+            desc = _ev_desc(lookup, game, eid)
         if desc:
             body += f"<{desc}>"
         if ct != "MINION":
@@ -687,28 +710,35 @@ def _event_lines(lookup, game, me, opp):
         ev = evs[i]
         t, actor, et = ev["turn"], ev["actor"], ev["type"]
         if et in ("draw", "discard", "gain"):
-            j, names, unknown = i, [], 0
+            j, items, unknown = i, [], 0
             while (j < n and evs[j]["type"] == et and evs[j]["turn"] == t and evs[j]["actor"] == actor):
-                nm = _ev_name(lookup, game, evs[j].get("eid"))
+                eid_j = evs[j].get("eid")
+                nm = _ev_name(lookup, game, eid_j)
                 if nm:
-                    names.append(nm)
+                    items.append((nm, eid_j))
                 else:
                     unknown += 1
                 j += 1
             if et == "draw":
                 if opp_ctl is not None and actor == opp_ctl:
                     # 对方抽牌一律匿名: 对方手牌内容本就不可知, 事后打出揭示的 cardId 不回填到抽牌事件
-                    lines.append((t, actor, f"抽牌 {len(names) + unknown} 张"))
-                elif len(names) == 1 and not unknown:
-                    lines.append((t, actor, f"抽牌 {names[0]}"))
+                    lines.append((t, actor, f"抽牌 {len(items) + unknown} 张"))
+                elif len(items) == 1 and not unknown:
+                    nm, eid_j = items[0]
+                    desc = _ev_desc(lookup, game, eid_j)
+                    lines.append((t, actor, f"抽牌 {nm}<{desc}>" if desc else f"抽牌 {nm}"))
                 else:
-                    body = f"抽牌 {len(names) + unknown} 张"
-                    if names:
-                        body += f"（{'、'.join(names)}）"
+                    body = f"抽牌 {len(items) + unknown} 张"
+                    if items:
+                        parts = []
+                        for nm, eid_j in items:
+                            desc = _ev_desc(lookup, game, eid_j)
+                            parts.append(f"{nm}<{desc}>" if desc else nm)
+                        body += f"（{'、'.join(parts)}）"
                     lines.append((t, actor, body))
             else:
                 verb = "弃牌" if et == "discard" else "获得"
-                for nm in names:
+                for nm, _ in items:
                     lines.append((t, actor, f"{verb}：{nm}" if et == "discard" else f"{verb} {nm}"))
                 if unknown:
                     lines.append((t, actor, f"{verb} {unknown} 张牌" if et == "gain" else f"{verb} {unknown} 张"))
@@ -719,16 +749,25 @@ def _event_lines(lookup, game, me, opp):
     return lines
 
 
-def _events_section(lookup, game, me, opp, limit):
+def _events_section(lookup, game, me, opp, turns=3, mulligan=False):
+    """行动回顾: 按回合边界自动带最近 turns 个回合 (我方上回合全部+对方上回合全部+我方本回合已发生),
+    开局发牌记为回合 0 显示为"开局", 不按条数截断"""
     lines = _event_lines(lookup, game, me, opp)
     out = ["=== 行动回顾 ==="]
     if not lines:
         out.append("（暂无行动记录）")
         return out
-    out += [f"[第 {t} 回合·{_ev_side(game, me, opp, actor)}] {txt}"
-            for t, actor, txt in lines[-limit:]]
-    cur_t, cur_actor = game["turn"], game["actor"]
-    if cur_actor is not None and not any(t == cur_t and a == cur_actor for t, a, _ in lines):
+    cur_t = game["turn"]
+    if turns and cur_t:
+        floor = cur_t - (turns - 1)
+        lines = [x for x in lines if floor <= x[0] <= cur_t]
+    if not lines:
+        out.append("（近期无行动记录）")
+        return out
+    out += [f"[{'开局' if t == 0 else f'第 {t} 回合'}·{_ev_side(game, me, opp, actor)}] {txt}"
+            for t, actor, txt in lines]
+    cur_actor = game["actor"]
+    if cur_actor is not None and not mulligan and not any(t == cur_t and a == cur_actor for t, a, _ in lines):
         out.append(f"[第 {cur_t} 回合·{_ev_side(game, me, opp, cur_actor)}] （尚未行动或无动作）")
     return out
 
@@ -744,7 +783,7 @@ def _mana_line(game, me, mulligan):
     return f"我的法力 {res - used + temp}/{res}（已用 {used}）"
 
 
-def render_panel(game, start_line, total, lookup, class_names, player_arg=None, events_n=12):
+def render_panel(game, start_line, total, lookup, class_names, player_arg=None, events_turns=3):
     out = ["=== 炉石对局面板 ==="]
     if game is None or not game["entities"]:
         out.append("（尚未开始对局或日志为空）")
@@ -805,15 +844,15 @@ def render_panel(game, start_line, total, lookup, class_names, player_arg=None, 
             out.append(f"我方手牌({len(hand)})：")
             out.extend(hand)
 
-    if events_n and not mulligan:  # 行动回顾放在调试行前; 换牌阶段/无对局不输出
-        out.extend(_events_section(lookup, game, me, opp, events_n))
+    if events_turns:  # 行动回顾放在调试行前; 换牌阶段输出开局发牌供留牌建议
+        out.extend(_events_section(lookup, game, me, opp, turns=events_turns, mulligan=mulligan))
 
     out.append(f"# 实体总数 {len(game['entities'])} | 解析起始行 {start_line} | 日志总行 {total}")
     return "\n".join(out)
 
 
 def cmd_board(args):
-    log_path, use_stdin, player, events_n = None, False, None, 12
+    log_path, use_stdin, player, events_turns = None, False, None, 3
     for a in args:
         if a.startswith("--"):
             k, _, v = a[2:].partition("=")
@@ -824,9 +863,9 @@ def cmd_board(args):
             elif k == "player":
                 player = v
             elif k == "events":
-                events_n = _num(v)
-                if events_n is None or events_n < 0:
-                    sys.exit("--events 需要非负整数 (默认 12, N=0 完全不输出行动回顾)")
+                events_turns = _num(v)
+                if events_turns is None or events_turns < 0:
+                    sys.exit("--events 需要非负整数 (默认 3 = 最近 3 个回合, N=0 完全不输出行动回顾)")
             else:
                 sys.exit(f"未知选项: --{k}")
         else:
@@ -847,6 +886,6 @@ def cmd_board(args):
     for cid, c in load_full_db().items():
         # 全量库兜底 (英雄技能/token 等非 collectible): collectible 已有的条目不覆盖, 查卡顺序优先原库
         lookup.setdefault(cid, c)
-    print(render_panel(game, start_line, total, lookup, CLASS_NAMES, player, events_n=events_n))
+    print(render_panel(game, start_line, total, lookup, CLASS_NAMES, player, events_turns=events_turns))
 
 

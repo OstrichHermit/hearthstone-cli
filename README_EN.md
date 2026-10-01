@@ -140,9 +140,8 @@ Validation errors are itemized line by line so an agent can fix the deck mechani
   5. 强固 3费 法术
   6. 时光领主埃博克 6费 7/5 随从
 === 行动回顾 ===
-[第 7 回合·对方] 打出 随从「抛石鱼人」1/3<战吼：获取一张 法力值消耗为（1）的石头。石头可以造成3点伤害。>
-[第 8 回合·我方] 抽牌 强固
-[第 8 回合·我方] 打出 法术「控制局面」<对所有随从造成2点伤害，触发两次。如果你的牌库中有25张或以上的牌，本牌的法力值消耗减少（2）点…>
+[第 8 回合·我方] 抽牌 强固<获得3点护甲值。对一个敌方随从造成等同于你护甲值的伤害。>
+[第 8 回合·我方] 打出 法术「控制局面」
 [第 8 回合·我方] 死亡：异教低阶牧师
 [第 8 回合·我方] 死亡：游侠新兵温蕾萨
 [第 8 回合·我方] 死亡：抛石鱼人
@@ -150,7 +149,7 @@ Validation errors are itemized line by line so an agent can fix the deck mechani
 [第 9 回合·对方] 打出 随从「游侠队长奥蕾莉亚」2/4<战吼：发现一张法术牌。如果你使用过希尔瓦娜斯或温蕾萨，每使用过一位，重复一次。>
 [第 9 回合·对方] 获得 2 张牌
 [第 9 回合·对方] 打出 随从「抛石鱼人」2/4<战吼：获取一张 法力值消耗为（1）的石头。石头可以造成3点伤害。>
-[第 10 回合·我方] 抽牌 时光领主埃博克
+[第 10 回合·我方] 抽牌 时光领主埃博克<战吼：消灭你的对手上回合使用的 所有随从。>
 [第 10 回合·我方] 英雄技能 全副武装！
 # 实体总数 106 | 解析起始行 2 | 日志总行 8000
 ```
@@ -159,7 +158,7 @@ Validation errors are itemized line by line so an agent can fix the deck mechani
 
 > **`hs board` / `hs watch` are under active development**: the Hearthstone log format shifts with each patch, and coverage of complex in-game effects (transforms, tokens, bounce, ...) keeps expanding. If you hit a parse error or odd panel data, please open an [issue](https://github.com/OstrichHermit/hearthstone-cli/issues) or send a PR — all help welcome!
 
-`hs board` replays every packet from the last `CREATE_GAME` in the log and prints the final state panel, ready to be fed to an AI. Your side is auto-detected as the player whose hand is visible (only the local client sees its own hand); pin it with `--player=<name>` if unsure. `--stdin` reads the log from a pipe for testing. Each panel ends with a recap of recent actions — a stream of both sides' latest plays, attacks, hero powers and draw/discard events (`--events=N` to change the number of lines, `--events=0` to hide it); played cards and summoned minions carry their effect text (truncated to 48 chars) so the AI can understand unfamiliar cards without a db lookup.
+`hs board` replays every packet from the last `CREATE_GAME` in the log and prints the final state panel, ready to be fed to an AI. Your side is auto-detected as the player whose hand is visible (only the local client sees its own hand); pin it with `--player=<name>` if unsure. `--stdin` reads the log from a pipe for testing. Each panel ends with an action recap that automatically covers the last three turns along turn boundaries — all of my previous turn, all of the opponent's last turn, and what has already happened on my current turn (`--events=N` to change how many turns, `--events=0` to hide it). Effect text (truncated to 48 chars) is attached where a card first enters view: on my draw events (opening deal and mulligan redraws are recorded as the "opening" turn), on the opponent's played cards, and on both sides' summons — so the AI can understand unfamiliar cards without a db lookup. Opponent draws are reported as counts only, never card names. The mulligan-phase panel prints the opening deal the same way, ready for keep-or-mulligan advice.
 
 
 `hs watch start` runs a background daemon that tails Power.log; on the mulligan phase and on your turns it POSTs a fixed prompt to a self-hosted IM bridge (`POST /api/external/message`, Bearer-token auth), which then triggers AI advisor analysis in a Discord channel. Notes:
