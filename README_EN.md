@@ -145,6 +145,8 @@ Validation errors are itemized line by line so an agent can fix the deck mechani
 
 ## Game board & advisor watcher (board / watch)
 
+> **`hs board` / `hs watch` are under active development**: the Hearthstone log format shifts with each patch, and coverage of complex in-game effects (transforms, tokens, bounce, ...) keeps expanding. If you hit a parse error or odd panel data, please open an [issue](https://github.com/OstrichHermit/hs-deck-cli/issues) or send a PR — all help welcome!
+
 `hs board` replays every packet from the last `CREATE_GAME` in the log and prints the final state panel, ready to be fed to an AI. Your side is auto-detected as the player whose hand is visible (only the local client sees its own hand); pin it with `--player=<name>` if unsure. `--stdin` reads the log from a pipe for testing. Each panel ends with a recap of recent actions — a stream of both sides' latest plays, attacks, hero powers and draw/discard events (`--events=N` to change the number of lines, `--events=0` to hide it); played cards and summoned minions carry their effect text (truncated to 48 chars) so the AI can understand unfamiliar cards without a db lookup.
 
 
