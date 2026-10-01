@@ -504,7 +504,9 @@ def detect_me(game, player_arg=None):
 
 def _card_name(lookup, card_id, ent=None):
     if not card_id:
-        return "未知卡牌"
+        return "未知卡牌" if not (ent and ent.get("name")) else ent["name"]
+    if "UNKNOWN ENTITY" in card_id:  # 新版日志 token 占位文本, 不是真实 cardId
+        return "未知随从"
     c = lookup.get(card_id)
     if c and c.get("name"):
         return c["name"]
