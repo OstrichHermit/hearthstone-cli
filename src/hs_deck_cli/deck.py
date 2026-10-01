@@ -14,6 +14,12 @@
                                       生成卡组长图 PNG (本地 Chrome/Edge 无头渲染)
                                       标准卡组含非标准池卡时拦截不出图 (--force 强制渲染)
                                       默认同名卡不合并逐张列出, --merge 则合并同名卡
+  board   [--log=Power.log路径] [--stdin] [--player=玩家名]
+                                      解析炉石客户端日志 Power.log, 输出当前对局面板 (供 AI 军师分析)
+                                      默认读 %LOCALAPPDATA%\\Blizzard\\Hearthstone\\Logs\\Power.log, --stdin 从管道读
+  watch   start [--channel=ID] [--url=URL] [--token=TOKEN] [--log=路径] [--force]
+                                      启动军师监听守护进程 (tail Power.log, 换牌/我方回合时 POST 提示词到 IM 桥接器)
+          stop / status               停止监听 / 查看状态与最近触发事件 (status 可加 --events=N)
 
 deck.json 格式:
   {
@@ -921,6 +927,12 @@ def main():
         if kv.get("lang", "zh") not in ("zh", "en", "both"):
             sys.exit("--lang 只能是 zh / en / both")
         cmd_image(pos[0], force=("force" in flags), merge=("merge" in flags), **kv)
+    elif cmd == "board":
+        from hs_deck_cli import board as _board
+        _board.cmd_board(rest)
+    elif cmd == "watch":
+        from hs_deck_cli.watch_worker import cmd_watch
+        cmd_watch(rest)
     elif cmd == "filter":
         kv = {}
         for a in rest:
