@@ -145,7 +145,7 @@ hs watch stop
 
 ## 对局面板与军师监听（board / watch）
 
-`hs board` 从日志里最后一个 `CREATE_GAME` 起全量重放 packet，输出最终状态面板，适合直接喂给 AI 分析。我方默认按"手牌可见方"自动判定（只有客户端本人能看到手牌内容），判不准时用 `--player=玩家名` 手动指定；也支持 `--stdin` 从管道读日志，方便测试。
+`hs board` 从日志里最后一个 `CREATE_GAME` 起全量重放 packet，输出最终状态面板，适合直接喂给 AI 分析。我方默认按"手牌可见方"自动判定（只有客户端本人能看到手牌内容），判不准时用 `--player=玩家名` 手动指定；也支持 `--stdin` 从管道读日志，方便测试。输出末尾附最近行动回顾（双方上回合出牌/攻击/技能/抽弃牌事件流，`--events=N` 调整条数，`--events=0` 关闭）。
 
 `hs watch start` 启动一个后台守护进程 tail Power.log，检测到换牌阶段或轮到我方回合时，向自建 IM 桥接器 `POST /api/external/message`（Bearer token 鉴权）注入固定提示词，由桥接器触发 Discord 军师频道的 AI 分析。说明：
 
