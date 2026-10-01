@@ -942,10 +942,10 @@ def main():
             sys.exit("--lang 只能是 zh / en / both")
         cmd_image(pos[0], force=("force" in flags), merge=("merge" in flags), **kv)
     elif cmd == "board":
-        from hs_deck_cli import board as _board
+        from hearthstone_cli import board as _board
         _board.cmd_board(rest)
     elif cmd == "watch":
-        from hs_deck_cli.watch_worker import cmd_watch
+        from hearthstone_cli.watch_worker import cmd_watch
         cmd_watch(rest)
     elif cmd == "filter":
         kv = {}

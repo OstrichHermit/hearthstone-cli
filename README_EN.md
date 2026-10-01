@@ -158,7 +158,7 @@ Validation errors are itemized line by line so an agent can fix the deck mechani
 
 ## Standard pool maintenance
 
-The whitelist lives in `src/hs_deck_cli/deck.py` (`STANDARD_SETS`). When a new expansion drops: run `hs update`, add the new set code, then `hs check` your library.
+The whitelist lives in `src/hearthstone_cli/deck.py` (`STANDARD_SETS`). When a new expansion drops: run `hs update`, add the new set code, then `hs check` your library.
 
 ## Data source
 

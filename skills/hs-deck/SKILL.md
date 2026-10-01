@@ -12,7 +12,7 @@ description: 炉石传说组卡命令行工具 hs 的使用方式——筛卡、
 - 全局命令 `hs`（标准 Python 包 hearthstone-cli，`pip install -e D:\AgentWorkspace\hearthstone-cli` 安装，入口 exe 在 Python314\Scripts\hs.exe）
 - git-bash 通道：PATH 无 Python Scripts 目录时走 `D:\AgentWorkspace\bin\hs`（转发 hs.exe）
 - 数据目录：`~/.hearthstone-cli\`（含 `cards_zh.json` / `cards_en.json` 双语卡牌库、`cards_full_zh.json` 中文全量库（含英雄技能/token，供对局面板查名与描述）、`decks\` 卡组库存档、`image\` 卡组图默认输出），可用环境变量 `HS_DECK_HOME` 自定义
-- 仓库本地路径 `D:\AgentWorkspace\hearthstone-cli\`（src 布局，源码在 `src/hs_deck_cli/deck.py`）
+- 仓库本地路径 `D:\AgentWorkspace\hearthstone-cli\`（src 布局，源码在 `src/hearthstone_cli/deck.py`）
 - 卡牌库缺失或补丁后先 `hs update` 刷新（从 HearthstoneJSON 下载中英 collectible 卡与中文全量库，需联网）
 
 ## 常用命令
@@ -70,7 +70,7 @@ hs watch start/stop/status             # 军师监听：换牌/我方回合时 P
 
 ## 标准池维护（补丁日例行）
 
-新版本上线后：`hs update` 刷新卡库 → 把新系列 set 代码加进 `src/hs_deck_cli/deck.py` 头部 `STANDARD_SETS` → `hs check` 体检卡组库（退环境卡逐条列出）。CORE_HIDDEN 数据假象已剔除，旧核心卡不会误判为标准可用。
+新版本上线后：`hs update` 刷新卡库 → 把新系列 set 代码加进 `src/hearthstone_cli/deck.py` 头部 `STANDARD_SETS` → `hs check` 体检卡组库（退环境卡逐条列出）。CORE_HIDDEN 数据假象已剔除，旧核心卡不会误判为标准可用。
 
 ## 注意
 

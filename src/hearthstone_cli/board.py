@@ -841,7 +841,7 @@ def cmd_board(args):
         lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
 
     game, start_line, total = parse_power_log(lines)
-    from hs_deck_cli.deck import CLASS_NAMES, load_db, load_full_db  # 延迟导入避免循环依赖
+    from hearthstone_cli.deck import CLASS_NAMES, load_db, load_full_db  # 延迟导入避免循环依赖
     lookup = {c.get("id"): c for c in load_db()}
     for cid, c in load_full_db().items():
         # 全量库兜底 (英雄技能/token 等非 collectible): collectible 已有的条目不覆盖, 查卡顺序优先原库

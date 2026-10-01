@@ -8,7 +8,7 @@
 
 配置存 ~/.hearthstone-cli/watch_config.json (merge 语义, 不带参沿用上次配置);
 watch.log / watch.pid 与配置文件同目录 (便于 --config 测试隔离)。
-worker 本体: `python -m hs_deck_cli.watch_worker --config=...`, 标准库 only。
+worker 本体: `python -m hearthstone_cli.watch_worker --config=...`, 标准库 only。
 """
 import json
 import os
@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from hs_deck_cli import board
+from hearthstone_cli import board
 
 DEFAULT_URL = "http://127.0.0.1:8088"
 DEFAULT_CHANNEL = "1477362651859255326"
@@ -401,7 +401,7 @@ def _watch_start(argv):
     creation = 0x00000008 | 0x08000000 if os.name == "nt" else 0  # DETACHED_PROCESS | CREATE_NO_WINDOW
     with open(log_path, "ab") as lf:
         proc = subprocess.Popen(
-            [sys.executable, "-m", "hs_deck_cli.watch_worker", f"--config={cfg_path}"],
+            [sys.executable, "-m", "hearthstone_cli.watch_worker", f"--config={cfg_path}"],
             stdin=subprocess.DEVNULL, stdout=lf, stderr=lf,
             creationflags=creation, close_fds=True)
     time.sleep(0.8)
