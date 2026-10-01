@@ -145,7 +145,7 @@ Validation errors are itemized line by line so an agent can fix the deck mechani
 
 ## Game board & advisor watcher (board / watch)
 
-`hs board` replays every packet from the last `CREATE_GAME` in the log and prints the final state panel, ready to be fed to an AI. Your side is auto-detected as the player whose hand is visible (only the local client sees its own hand); pin it with `--player=<name>` if unsure. `--stdin` reads the log from a pipe for testing. Each panel ends with a recap of recent actions — a stream of both sides' latest plays, attacks, hero powers and draw/discard events (`--events=N` to change the number of lines, `--events=0` to hide it); played cards carry their effect text (truncated to 48 chars) so the AI can understand unfamiliar cards without a db lookup.
+`hs board` replays every packet from the last `CREATE_GAME` in the log and prints the final state panel, ready to be fed to an AI. Your side is auto-detected as the player whose hand is visible (only the local client sees its own hand); pin it with `--player=<name>` if unsure. `--stdin` reads the log from a pipe for testing. Each panel ends with a recap of recent actions — a stream of both sides' latest plays, attacks, hero powers and draw/discard events (`--events=N` to change the number of lines, `--events=0` to hide it); played cards and summoned minions carry their effect text (truncated to 48 chars) so the AI can understand unfamiliar cards without a db lookup.
 
 
 `hs watch start` runs a background daemon that tails Power.log; on the mulligan phase and on your turns it POSTs a fixed prompt to a self-hosted IM bridge (`POST /api/external/message`, Bearer-token auth), which then triggers AI advisor analysis in a Discord channel. Notes:
