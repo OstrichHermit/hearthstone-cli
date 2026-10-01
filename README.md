@@ -1,6 +1,6 @@
 # hs-deck-cli — Hearthstone Deck CLI for AI Agents
 
-**面向 AI Agent 的炉石传说组卡命令行工具 —— 校验、编码、解码、筛卡、卡组库存档与版本体检。**
+**面向 AI Agent 的炉石传说组卡命令行工具 —— 校验、编码、解码、筛卡、卡组库存档与版本体检，另可解析客户端日志输出对局面板、监听对局触发 AI 军师分析。**
 
 A command-line deck building tool for Hearthstone designed for AI agents — validation, encoding, decoding, card filtering, deck archiving and patch-cycle health checks.
 
@@ -19,6 +19,8 @@ A command-line deck building tool for Hearthstone designed for AI agents — val
 - **多职业与游客机制** — 按 `classes` 数组识别多职业卡（如六职业共用的灭世者死亡之翼），并完整实现胜地历险记游客三条规则：游客仅解锁目的地职业的该扩展卡牌、每套限一名游客、不可嵌套
 - **卡组库与版本体检** — 卡组本地存档，版本更新后一键体检，退环境卡逐条列出
 - **卡组长图** — 一条命令把卡组渲染成可分享的卡组长图（中/英版各自独立）：法力曲线、稀有度配色（默认逐张列出，`--merge` 合并同名卡）、职业徽记、英雄与卡组代码，2x 渲染输出 1520px 宽，调用本地无头 Chrome/Edge
+- **对局面板** — 解析炉石客户端日志 Power.log，输出当前对局的结构化面板：回合、法力、双方英雄血甲、场面随从（含嘲讽/圣盾等状态标签）、我方手牌费用攻血、对手手牌与牌库疲劳
+- **军师监听** — `hs watch` 后台监听 Power.log，换牌阶段和轮到我方回合时向自建 IM 桥接器推送固定提示词，触发 AI 军师分析对局
 - **对 Agent 友好** — 纯 JSON 输入、报错逐条列出便于自我修正、无任何交互式提示
 - **本地双语卡牌库** — 中英双语卡牌数据源自 [HearthstoneJSON](https://hearthstonejson.com/)，补丁日一条命令刷新
 
@@ -82,6 +84,16 @@ hs image AAECAQcGo6AE... --name=Turtle    # 直接给代码
 hs image my-deck --lang=en                # 英文版（--lang=both 一次出中英两版）
 hs image my-deck --merge                  # 同名卡合并为一行
 hs image my-deck --name=龟甲防战 --name-en=Turtle Warrior
+
+# 解析当前对局面板（默认读 %LOCALAPPDATA%\Blizzard\Hearthstone\Logs\Power.log）
+hs board
+hs board --log=D:\games\Hearthstone\Logs\Power.log   # 指定日志路径
+hs board --player=鸵鸟居士                            # 自动判定我方不准时手动指定
+
+# 军师监听：换牌阶段/轮到我方回合时，向 IM 桥接器 POST 提示词触发 AI 分析
+hs watch start --channel=<Discord频道ID> --token=<桥接器token>
+hs watch status                                      # 查看运行状态与最近触发事件
+hs watch stop
 ```
 
 标准卡组含非标准池卡时默认拦截不出图，`--force` 可强制渲染。
@@ -106,6 +118,40 @@ hs image my-deck --name=龟甲防战 --name-en=Turtle Warrior
   - 套牌必须30张, 当前27张
   - 奇利亚斯豪华版3000型 的系列 WHIZBANGS_WORKSHOP 不在当前标准池
 ```
+
+`hs board` 输出的对局面板长这样：
+
+```
+=== 炉石对局面板 ===
+回合 8 | 我的回合 | 我的法力 5/8（已用 3）
+对方：暴风城诗人（法师）手牌 4 牌库 18 疲劳 0
+英雄：吉安娜·普罗德摩尔 血 15/30 护甲 0 武器 无 技能 火焰冲击(未用)
+对方场面(2)：
+  1. 卑劣的脏鼠 3/6 [嘲讽]
+  2. 苦痛侍僧 1/3
+我方：鸵鸟居士（战士）牌库 22 疲劳 0
+英雄：加尔鲁什·地狱咆哮 血 22/30 护甲 5 武器 无 技能 全副武装(未用)
+我方场面(3)：
+  1. 铸甲师 1/4
+  2. 库卡隆精英卫士 4/3 [冲锋]
+  3. 暴乱狂战士 3/3
+我方手牌(4)：
+  1. 斩杀 2费 法术
+  2. 盾牌格挡 3费 法术
+  3. 铸甲师 1费 随从 1/4
+  4. 绝命乱斗 5费 法术
+# 实体总数 142 | 解析起始行 3210 | 日志总行 9845
+```
+
+## 对局面板与军师监听（board / watch）
+
+`hs board` 从日志里最后一个 `CREATE_GAME` 起全量重放 packet，输出最终状态面板，适合直接喂给 AI 分析。我方默认按"手牌可见方"自动判定（只有客户端本人能看到手牌内容），判不准时用 `--player=玩家名` 手动指定；也支持 `--stdin` 从管道读日志，方便测试。
+
+`hs watch start` 启动一个后台守护进程 tail Power.log，检测到换牌阶段或轮到我方回合时，向自建 IM 桥接器 `POST /api/external/message`（Bearer token 鉴权）注入固定提示词，由桥接器触发 Discord 军师频道的 AI 分析。说明：
+
+- **桥接器是私有组件，不在本仓库内**（默认 `http://127.0.0.1:8088`）。不配置或连不上桥接器时，`hs watch` 单独使用只监听不发送——POST 失败自动重试 3 次后继续监听，不会崩溃，触发事件可用 `hs watch status --events=N` 查看
+- 配置 merge 存于 `~/.hs-deck-cli/watch_config.json`，再次 `start` 不带参数沿用上次配置；`--force` 可在残留进程时强制重启
+- 提示词可用 `--mulligan-prompt=` / `--turn-prompt=` 自定义，token 也可用环境变量 `HS_WATCH_TOKEN` 传入
 
 ## 标准池维护
 

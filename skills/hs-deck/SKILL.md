@@ -1,6 +1,6 @@
 ---
 name: hs-deck
-description: 炉石传说组卡命令行工具 hs 的使用方式——筛卡、编解码卡组代码（deckstring）、校验 deck.json、卡组库存档与版本体检、生成可分享的卡组长图。当用户要组卡、校验/解码卡组、查卡、生成卡组图，或提到炉石组卡器、hs 命令、hs-deck-cli、deckstring、卡组代码时使用此 skill。
+description: 炉石传说组卡命令行工具 hs 的使用方式——筛卡、编解码卡组代码（deckstring）、校验 deck.json、卡组库存档与版本体检、生成可分享的卡组长图、解析 Power.log 输出对局面板、监听对局触发 AI 军师。当用户要组卡、校验/解码卡组、查卡、生成卡组图、看对局面板/对局分析，或提到炉石组卡器、hs 命令、hs-deck-cli、deckstring、卡组代码、hs board、hs watch 时使用此 skill。
 ---
 
 # 炉石组卡器（hs）
@@ -28,6 +28,8 @@ hs show <名字>                        # 查看存档卡组明细
 hs check [名字]                       # 体检存档卡组（省略名字 = 全部）
 hs fetch <URL>                        # 抓网页里的卡组代码（只打印，不入库）
 hs image <名字或代码> [选项]           # 生成卡组长图 PNG
+hs board [--log=路径|--stdin] [--player=名字]  # 解析 Power.log 输出当前对局面板
+hs watch start/stop/status             # 军师监听：换牌/我方回合时 POST 提示词到 IM 桥接器
 ```
 
 `hs image` 选项：`--lang=zh|en|both`、`--name=标题`、`--name-en=英文标题`、`--merge`（同名卡合并一行）、`--force`（绕过标准池拦截）、`--out=路径.png`。
@@ -59,6 +61,13 @@ hs image <名字或代码> [选项]           # 生成卡组长图 PNG
 - 标准卡组含非标准卡时默认拦截不出图——正确做法是修卡组，`--force` 只在明确要看非标准卡组时用
 - 依赖本机 Chrome/Edge 无头渲染（自动探测，可用环境变量 `CHROME_PATH` 指定）
 
+## 对局面板与军师监听（hs board / hs watch）
+
+- `hs board` 解析炉石客户端日志 Power.log（默认 `%LOCALAPPDATA%\Blizzard\Hearthstone\Logs\Power.log`，可 `--log=` 指定或 `--stdin` 管道读），从最后一个 CREATE_GAME 全量重放，输出结构化面板：回合/法力、双方英雄血甲、场面随从带状态标签、我方手牌费用攻血、对手牌库疲劳；我方按"手牌可见方"自动判定，不准时 `--player=玩家名` 手动指定
+- `hs watch start/stop/status`：后台守护进程 tail Power.log，检测到换牌阶段或轮到我方回合时，向自建 IM 桥接器 `POST /api/external/message` 注入固定提示词，触发 Discord 军师频道 AI 分析（工作原理一句话：检测回合 → POST 提示词 → 桥接器触发 AI）
+- 桥接器是私有组件（默认 `http://127.0.0.1:8088`，Bearer token 鉴权），不在本仓库；`hs watch` 单独使用只监听不发送，POST 失败重试 3 次后继续监听
+- 配置 merge 存 `~/.hs-deck-cli/watch_config.json`，不带参 `start` 沿用上次配置；`--force` 强制重启；`status --events=N` 看最近触发；提示词用 `--mulligan-prompt=` / `--turn-prompt=` 自定义
+
 ## 标准池维护（补丁日例行）
 
 新版本上线后：`hs update` 刷新卡库 → 把新系列 set 代码加进 `src/hs_deck_cli/deck.py` 头部 `STANDARD_SETS` → `hs check` 体检卡组库（退环境卡逐条列出）。CORE_HIDDEN 数据假象已剔除，旧核心卡不会误判为标准可用。
@@ -68,4 +77,5 @@ hs image <名字或代码> [选项]           # 生成卡组长图 PNG
 - 报错逐条输出，按条机械修正后重跑 `validate` 即可
 - `hs fetch` 对 SPA 页面抓不到卡组代码，让用户手动复制后走 `hs save` / `hs decode`
 - 狂野同名卡多版本自动选版，无需手动指定
+- `hs board` / `hs watch` 仅在 Windows 且本机跑过炉石客户端时可用（依赖 Power.log）；军师分析需 IM 桥接器在本机运行
 - git-bash 里 python/node 全局命令缺失时，用全路径 python 或 windows-mcp 的 PowerShell 工具执行
