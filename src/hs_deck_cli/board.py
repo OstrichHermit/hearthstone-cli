@@ -237,7 +237,9 @@ def _watch_tag(game, ent, tag, value, old_zone, old_exh):
         game["actor"] = ent["controller"] if ent["controller"] is not None else (_tag_int(ent, "PLAYER_ID") or None)
         return
     if tag == "CURRENT_PLAYER" and _ctype(ent) == "PLAYER":
-        # 不在此开闸: 换牌流程内也会写 CURRENT_PLAYER (先手标记), 会导致换牌抽牌被记成事件
+        if _num(value) == 1:
+            # 每次回合切换都刷新行动方 (否则行动回顾全部归到换牌 DONE 时的先手头上)
+            game["actor"] = ent["controller"] if ent["controller"] is not None else (_tag_int(ent, "PLAYER_ID") or None)
         return
     if not game["gate"]:
         return
@@ -265,8 +267,8 @@ def _zone_event(game, ent, old):
         elif ct == "WEAPON":
             _record(game, "equip", eid=ent["id"])
     elif new == "GRAVEYARD":
-        if old == "PLAY":
-            _record(game, "death", eid=ent["id"])
+        if old == "PLAY" and ct in ("MINION", "HERO", "WEAPON", "LOCATION"):
+            _record(game, "death", eid=ent["id"])  # 法术/技能结算进坟场不算死亡
         elif old == "HAND":
             _record(game, "discard", eid=ent["id"])
     elif old == "SETASIDE" and new == "HAND":
