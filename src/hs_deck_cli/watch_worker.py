@@ -257,7 +257,7 @@ def tail_loop(power_path, ctx):
                 continue
             if any(t in line for t in TRIGGERS):
                 _drain(f)
-                time.sleep(1.5)  # 等日志落盘完整再解析
+                time.sleep(2.5)  # 等日志落盘完整再解析 (回合开始的 RESOURCES/TURN 与 CURRENT_PLAYER 分批写入)
                 _handle(ctx)
         except Exception as e:  # 绝不崩溃, 记日志继续跑
             if f:
