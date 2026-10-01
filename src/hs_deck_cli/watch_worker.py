@@ -118,17 +118,23 @@ def analyze(lines):
     if not game or not game["entities"]:
         return None
     me, _opp, unknown = board.detect_me(game)
+    if me is None or board._playstate(me) != "PLAYING":
+        return None  # 无法判定我方 / 非进行中对局 (匹配等待/选牌界面等) 一律不触发
     mulligan = board.is_mulligan(game)
     over = board.is_game_over(game)
     g_ent = board._game_entity(game)
     turn = board._tag_int(g_ent, "TURN") if g_ent else 0
     cur = next((p for p in board._players(game) if board._tag_int(p, "CURRENT_PLAYER") == 1), None)
-    my_turn = me is not None and cur is me
+    my_turn = cur is me
+    mulligan_done = board._norm(me["tags"].get("MULLIGAN_STATE", ""), board.MULLIGAN_BY_NUM) == "DONE"
+    heroes_in_play = sum(1 for e in game["entities"].values()
+                         if board._ctype(e) == "HERO" and e["zone"] == "PLAY")
     if over:
         phase = "over"
     elif mulligan and not unknown:  # 换牌阶段且我方手牌已亮
         phase = "mulligan"
-    elif my_turn and not mulligan:
+    elif my_turn and not mulligan and mulligan_done and heroes_in_play >= 2:
+        # 正式回合: 我方换牌已结束 + 双方英雄已上场 (排除匹配等待期的预备数据)
         phase = "turn"
     else:
         phase = None

@@ -447,10 +447,9 @@ def _playstate(ent):
 
 
 def is_mulligan(game):
-    for e in list(game["entities"].values()):
-        if _norm(e["tags"].get("MULLIGAN_STATE", ""), MULLIGAN_BY_NUM) == "INPUT":
-            return True
-    return False
+    """换牌阶段判定: 只看真实 Player 实体 (占位/匿名实体的残留 INPUT 不算)"""
+    return any(_norm(p["tags"].get("MULLIGAN_STATE", ""), MULLIGAN_BY_NUM) == "INPUT"
+               for p in _players(game))
 
 
 def is_game_over(game):
