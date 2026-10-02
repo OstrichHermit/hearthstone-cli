@@ -146,7 +146,7 @@ def _new_game():
 def _create_entity_by_id(game, eid, card_id, name="", zone=""):
     game["entities"][eid] = {
         "id": eid, "cardId": card_id, "zone": zone, "zone_pos": 0,
-        "controller": None, "tags": {}, "name": name, "peak_hp": 0,
+        "controller": None, "tags": {}, "name": name, "peak_hp": 0, "fresh": True,
     }
     if name:
         game["names"][name] = eid
@@ -246,6 +246,16 @@ def _apply_tag(game, eid, tag, value):
             _record(game, "heal", eid=ent["id"], hp=(max(base - old_val, 0), max(base - new_val, 0)))
         elif tag == "ARMOR" and _ctype(ent) == "HERO" and None not in (old_val, new_val) and new_val > old_val:
             _record(game, "armor", eid=ent["id"], gain=new_val - old_val)
+    # FULL_ENTITY 直接建在场面上的英雄技能 = 技能被替换/升级 (灌注/英雄牌/形态切换), 无 zone 迁移可监听;
+    # 开局/换牌期创建的实体只清标记不记事件, 避免自带技能误报
+    if ent.get("fresh"):
+        if not game["gate"] or game["grace"]:
+            ent["fresh"] = False
+        elif ent["zone"] == "PLAY" and _ctype(ent) == "HERO_POWER":
+            ent["fresh"] = False
+            _record(game, "power_change", eid=ent["id"])
+        elif ent["zone"] and ent["zone"] != "PLAY":
+            ent["fresh"] = False  # 迁移入场/库中实体不走技能变更事件
 
 
 def _record(game, etype, turn=None, actor=None, **kw):
@@ -701,6 +711,16 @@ def _fmt_stat(stat):
     return f" {stat[0]}/{stat[1]}" if stat else ""
 
 
+def _power_desc(lookup, game, eid, name):
+    """英雄技能描述: 经典技能按名/ID 内置, 其余查全量库; 去掉原文自带的'英雄技能'引导词"""
+    ent = game["entities"].get(eid)
+    desc = (HERO_POWER_DESC_BY_NAME.get(name) or HERO_POWER_TEXTS.get((ent.get("cardId") if ent else "") or "")
+            or _ev_desc(lookup, game, eid))
+    if desc.startswith("英雄技能"):  # 技能原文自带的引导词与行前缀重复
+        desc = desc[len("英雄技能"):].strip()
+    return desc
+
+
 def _single_event_text(lookup, game, me, opp, ev):
     eid = ev.get("eid")
     if ev["type"] == "play":
@@ -730,11 +750,14 @@ def _single_event_text(lookup, game, me, opp, ev):
     if ev["type"] == "power":
         name = _ev_name(lookup, game, eid, "未知技能")
         body = f"英雄技能 {name}"
-        ent = game["entities"].get(eid)
-        desc = (HERO_POWER_DESC_BY_NAME.get(name) or HERO_POWER_TEXTS.get((ent.get("cardId") if ent else "") or "")
-                or _ev_desc(lookup, game, eid))
-        if desc.startswith("英雄技能"):  # 技能原文自带的引导词与行前缀重复
-            desc = desc[len("英雄技能"):].strip()
+        desc = _power_desc(lookup, game, eid, name)
+        if desc:
+            body += f"<{desc}>"
+        return body
+    if ev["type"] == "power_change":
+        name = _ev_name(lookup, game, eid, "未知技能")
+        body = f"技能变更 {name}"
+        desc = _power_desc(lookup, game, eid, name)
         if desc:
             body += f"<{desc}>"
         return body
