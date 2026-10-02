@@ -745,8 +745,10 @@ def _single_event_text(lookup, game, me, opp, ev):
         ref = ev.get("atk_ref") or ""
         atk_id = _ref_id(ref)
         name = _ev_name(lookup, game, atk_id, fallback=ref if ref[:1].isalpha() else "") or "未知随从"
-        return (f"攻击：{name}{_fmt_stat(ev.get('atk_stat'))}"
-                f" → {_ev_target(lookup, game, me, opp, ev.get('tgt_ref')) or '未知目标'}{_fmt_stat(ev.get('tgt_stat'))}")
+        tgt = _ev_target(lookup, game, me, opp, ev.get("tgt_ref"))
+        # Target=0/-1 = 引擎记录的取消/无目标攻击块, 只显示攻击方, 不编造"未知目标"
+        body = f"攻击：{name}{_fmt_stat(ev.get('atk_stat'))}"
+        return f"{body} → {tgt}{_fmt_stat(ev.get('tgt_stat'))}" if tgt else body
     if ev["type"] == "power":
         name = _ev_name(lookup, game, eid, "未知技能")
         body = f"英雄技能 {name}"
