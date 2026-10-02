@@ -190,10 +190,10 @@ def _resolve(game, ref):
     eid = _ref_id(ref)
     if eid is not None:
         ent = game["entities"].get(eid)
-        if ent and not ent["name"]:
-            nm = ENTITY_NAME_RE.search(ref)
-            if nm:
-                ent["name"] = nm.group(1)
+        nm = ENTITY_NAME_RE.search(ref)
+        if nm and not nm.group(1).startswith("UNKNOWN") and (not ent["name"] or ent["name"].startswith("UNKNOWN")):
+            # 内联名迟到: 真名覆盖空名/UNKNOWN 占位 (对方任务打出时引用才带真名)
+            ent["name"] = nm.group(1)
         return eid
     name = ref.strip()
     if name in game["names"]:
@@ -342,8 +342,12 @@ def _zone_event(game, ent, old):
     elif old == "PLAY" and new == "HAND" and ct in PLAYABLE_TYPES:
         _record(game, "bounce", eid=ent["id"])  # 被移回手牌 (对方亡语/法术效果), 不记则场面凭空少人
     elif old == "HAND" and new == "SECRET":
-        # 奥秘/任务打出: 打出时刻 cardId 未必可见 (对方奥秘触发才揭示), 快照可见性防止渲染时信息穿越
-        _record(game, "secret_play", eid=ent["id"], known=bool(ent["cardId"]))
+        # 奥秘/任务打出: 任务名进度公开(方括号引用带内联名), 真奥秘隐藏(UNKNOWN) 触发才揭示;
+        # 打出时刻快照可见性与名字 (任务链变形会重建实体, 最终态查不到打出的名字)
+        nm = ent.get("name") or ""
+        known = bool(ent["cardId"]) or bool(nm and not nm.startswith("UNKNOWN"))
+        _record(game, "secret_play", eid=ent["id"], known=known,
+                name=nm if nm and not nm.startswith("UNKNOWN") else "", card_id=ent["cardId"] or "")
     elif old == "SETASIDE" and new == "PLAY":
         if ct == "MINION":
             _record(game, "summon", eid=ent["id"], stat=_stat_snap(game, ent["id"]))
@@ -810,8 +814,10 @@ def _single_event_text(lookup, game, me, opp, ev):
     if ev["type"] == "secret_play":
         ent = game["entities"].get(eid)
         kind = "任务" if ent and _tag_int(ent, "QUEST") == 1 else "奥秘"  # SECRET 区含奥秘与任务, QUEST tag 区分
-        name = _ev_name(lookup, game, eid, "") if ev.get("known") else ""
-        return f"打出 {kind}「{name}」" if name else f"打出 {kind}"  # 打出时不可见(对方奥秘)则匿名, 不用触发才揭示的名字
+        name = ev.get("name") or ""  # 打出时刻的名字/cardId 快照 (实体可能被任务链变形重建)
+        if not name and ev.get("known"):
+            name = _card_name(lookup, ev.get("card_id") or "", None)
+        return f"打出 {kind}「{name}」" if name else f"打出 {kind}"
     if ev["type"] == "secret_trigger":
         ent = game["entities"].get(eid)
         kind = "任务" if ent and _tag_int(ent, "QUEST") == 1 else "奥秘"
