@@ -822,9 +822,10 @@ def _single_event_text(lookup, game, me, opp, ev):
         if not name:
             return f"打出 {kind}"  # 对方真奥秘匿名, 无名字也无描述
         body = f"打出 {kind}「{name}」"
-        desc = _ev_desc(lookup, game, eid, card_id=ev.get("card_id"))
-        if desc:
-            body += f"<{desc}>"
+        if not (me and ev.get("actor") == me["controller"]):  # 我方打出不带描述(抽牌时给过), 对方任务公开可见故带
+            desc = _ev_desc(lookup, game, eid, card_id=ev.get("card_id"))
+            if desc:
+                body += f"<{desc}>"
         return body
     if ev["type"] == "secret_trigger":
         ent = game["entities"].get(eid)
