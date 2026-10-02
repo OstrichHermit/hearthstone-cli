@@ -342,7 +342,8 @@ def _zone_event(game, ent, old):
     elif old == "PLAY" and new == "HAND" and ct in PLAYABLE_TYPES:
         _record(game, "bounce", eid=ent["id"])  # 被移回手牌 (对方亡语/法术效果), 不记则场面凭空少人
     elif old == "HAND" and new == "SECRET":
-        _record(game, "secret_play", eid=ent["id"])  # 奥秘打出 (对方 cardId 隐藏, 触发时才揭示)
+        # 奥秘/任务打出: 打出时刻 cardId 未必可见 (对方奥秘触发才揭示), 快照可见性防止渲染时信息穿越
+        _record(game, "secret_play", eid=ent["id"], known=bool(ent["cardId"]))
     elif old == "SETASIDE" and new == "PLAY":
         if ct == "MINION":
             _record(game, "summon", eid=ent["id"], stat=_stat_snap(game, ent["id"]))
@@ -809,8 +810,8 @@ def _single_event_text(lookup, game, me, opp, ev):
     if ev["type"] == "secret_play":
         ent = game["entities"].get(eid)
         kind = "任务" if ent and _tag_int(ent, "QUEST") == 1 else "奥秘"  # SECRET 区含奥秘与任务, QUEST tag 区分
-        name = _ev_name(lookup, game, eid, "")
-        return f"打出 {kind}「{name}」" if name else f"打出 {kind}"  # 对方实体 cardId 隐藏, 触发时才揭示
+        name = _ev_name(lookup, game, eid, "") if ev.get("known") else ""
+        return f"打出 {kind}「{name}」" if name else f"打出 {kind}"  # 打出时不可见(对方奥秘)则匿名, 不用触发才揭示的名字
     if ev["type"] == "secret_trigger":
         ent = game["entities"].get(eid)
         kind = "任务" if ent and _tag_int(ent, "QUEST") == 1 else "奥秘"
