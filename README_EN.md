@@ -1,14 +1,14 @@
-# hearthstone-cli — Hearthstone Deck CLI for AI Agents
+# hearthstone-cli — Hearthstone CLI Toolbox for AI Agents
 
-A command-line deck building tool for Hearthstone designed for AI agents — validation, encoding, decoding, card filtering, deck archiving and patch-cycle health checks, plus in-game board parsing from client logs and a turn watcher that feeds an AI advisor.
+A command-line toolbox for Hearthstone designed for AI agents, with two cores: deck building (validation, encoding, decoding, filtering, archiving, deck images) and match analysis (real-time board state & action replay parsed from client logs, plus an AI-counselor watcher).
 
-**面向 AI Agent 的炉石传说组卡命令行工具 —— 校验、编码、解码、筛卡、卡组库存档与版本体检，另可解析客户端日志输出对局面板、监听对局触发 AI 军师分析。**
+**面向 AI Agent 的炉石传说命令行工具箱，双核心：组卡（校验 / 编解码 / 筛卡 / 卡组库存档 / 版本体检 / 长图）+ 对局分析（解析客户端日志输出实时对局面板与战况回放，监听对局触发 AI 军师）。**
 
 [English](README_EN.md) | [简体中文](README.md)
 
 ---
 
-Human deck builders are GUI simulators: drag cards, watch the mana curve. An agent doesn't need that — it needs fast, scriptable trial-and-error: pick 30 cards, validate, get a deck code, fix what's flagged, repeat. This tool does exactly that.
+Human deck builders are GUI simulators: drag cards, watch the mana curve. An agent doesn't need that — it needs fast, scriptable trial-and-error: pick 30 cards, validate, get a deck code, fix what's flagged, repeat. And mid-game, an agent doesn't need a screenshot — it needs the full match state as parseable text: both sides' resources, boards, hands, and a turn-by-turn action replay. This toolbox answers both needs.
 
 ## Features
 
@@ -19,7 +19,8 @@ Human deck builders are GUI simulators: drag cards, watch the mana curve. An age
 - **Multiclass & Tourist** — respects `classes` arrays (e.g. Death Wing, Deathlord of the World shared by six classes) and the Perils in Paradise tourist rules: a Tourist unlocks only the destination class's cards *from that expansion*, one Tourist per deck, no nesting
 - **Deck library & health checks** — save decks locally, then `hs check` after every patch to see exactly which cards rotated out
 - **Deck image** — render any deck (library name or raw code) to a share-ready PNG, Chinese or English: mana curve, rarity-colored card rows (one row per card by default, `--merge` to combine duplicates), class sigil, hero and deck code; rendered at 2x (1520px wide). Uses local headless Chrome/Edge
-- **Game board** — parse the Hearthstone client log Power.log into a structured board panel: turn, mana, both heroes' HP/armor, board minions with status tags (taunt, divine shield, ...), your hand with cost/attack/health, opponent's hand size and both players' fatigue
+- **Game board** — full replay of the Hearthstone client log Power.log into a structured live panel: game mode, turn/action tracking, both sides' mana (incl. Overload locks) and turn order (coin marked), both heroes' HP/armor/weapon/power (incl. imbue/transform changes), board minions and locations with status tags (taunt, divine shield, windfury, frozen, dormant, golden, ...), your hand with cost/atk/hp (Forge preview, powered-up / unplayable tags), both players' deck count / fatigue / corpses, quest progress (shown separately from secrets), and an endgame line (win/loss via lethal, concede, or fatigue)
+- **Action replay** — a per-turn event stream covering every step of both players: plays (with effect text and battlecry targets), attacks (target + actual damage), hero powers, draw/discard, mulligan keeps/swaps, start-of-game triggers (legendary copies listed by name), deathrattle/trigger settlements (sourced summons, fatal damage tags, reborns, sourced heals), discover/cataclysm choices, prepare discounts, dormancy, deathrattle reveals (cast vs. revealed only), end-of-turn gains (with source), burned cards (named) — duplicates merged to avoid spam; the AI needs no card-db lookup
 - **Advisor watcher** — `hs watch` tails Power.log in the background; on the mulligan phase and your turns it pushes a fixed prompt to a self-hosted IM bridge, triggering AI advisor analysis
 - **Agent-friendly** — plain-JSON input, itemized error output for precise self-correction, zero interactive prompts
 - **Local card database** — zhCN + enUS data from [HearthstoneJSON](https://hearthstonejson.com/), refreshed with one command on patch day
@@ -123,43 +124,64 @@ Validation errors are itemized line by line so an agent can fix the deck mechani
 
 ```
 === 炉石对局面板 ===
-总第 10 手 | 我方第 5 回合 | 我的回合 | 我的法力 3/5（已用 2）
-对方：打盹的考拉（猎人）手牌 7 疲劳 0
-英雄：雷克萨 血 30/30 护甲 0 武器 无 技能 稳固射击(未用)
+休闲·标准 | 构建号 253216
+总第 17 手 | 我方第 9 回合 | 我的回合 | 我的法力 9/9（已用 0）
+对方：遛弯的树懒（牧师）[后手+硬币] 手牌 10 奥秘 0 牌库 17 尸体 5 疲劳 0 法力 3/8（已用 5）
+英雄：情报掮客拉祖尔 血 28/30 护甲 0 武器 无 技能 月亮的祝福(已用)
 对方场面(2)：
-  1. 游侠队长奥蕾莉亚 2/4 [本回合上场]
-  2. 抛石鱼人 2/4 [本回合上场]
-我方：鸵鸟居士（战士）疲劳 0
-英雄：麦格尼·铜须 血 29/30 护甲 5 武器 无 技能 全副武装！(已用)
-我方场面(0)：
+  1. 逐月幼龙 3/6 [金]
+  2. 凯洛斯的蛋 0/3
+我方：鸵鸟居士（战士）[先手] 奥秘 0 牌库 23 尸体 4 疲劳 0
+英雄：麦格尼·铜须 血 30/30 护甲 5 武器 无 技能 全副武装！(未用)
+任务 走进失落之城 8/10
+我方场面(3)：
+  1. 破链灾星霍格 10/10 [嘲讽]
+  2. 奥卓克希昂 6/4
+  3. 拉格纳罗斯的士兵 2/1
 我方手牌(6)：
-  1. 时光领主埃博克 6费 7/5 随从
-  2. 走进失落之城 1费 法术
-  3. 放出鳄鱼 2费 法术
-  4. 拉格纳罗斯，绝世烈火 8费 8/8 随从
+  1. 屠灭 6费 法术
+  2. 龟甲旋风 4费 法术
+  3. 拉格纳罗斯，绝世烈火 8费 8/8 随从 <兆示：拉格纳罗斯之手>
+  4. 放出鳄鱼 2费 法术
   5. 强固 3费 法术
-  6. 时光领主埃博克 6费 7/5 随从
+  6. 为了荣耀！ 3费 法术
 === 行动回顾 ===
-[第 8 回合·我方] 抽牌 强固<获得3点护甲值。对一个敌方随从造成等同于你护甲值的伤害。>
-[第 8 回合·我方] 打出 法术「控制局面」
-[第 8 回合·我方] 死亡：异教低阶牧师 3/0
-[第 8 回合·我方] 死亡：游侠新兵温蕾萨 2/0
-[第 8 回合·我方] 死亡：抛石鱼人 1/0
-[第 9 回合·对方] 抽牌 1 张
-[第 9 回合·对方] 打出 随从「游侠队长奥蕾莉亚」 2/4<战吼：发现一张法术牌。如果你使用过希尔瓦娜斯或温蕾萨，每使用过一位，重复一次。>
-[第 9 回合·对方] 获得 2 张牌
-[第 9 回合·对方] 打出 随从「抛石鱼人」 2/4<战吼：获取一张 法力值消耗为（1）的石头。石头可以造成3点伤害。>
-[第 10 回合·我方] 抽牌 时光领主埃博克<战吼：消灭你的对手上回合使用的 所有随从。>
-[第 10 回合·我方] 获得护甲 我方英雄 +2
-[第 10 回合·我方] 英雄技能 全副武装！<获得2点护甲值。>
-# 实体总数 106 | 解析起始行 2 | 日志总行 8000
+[第 14 回合·对方] 抽牌 1 张
+[第 14 回合·对方] 英雄技能 月亮的祝福<选择一张可用的牧师随从牌或法术牌置入你的手牌，其法力值消耗减少（>
+[第 14 回合·对方] 选择：受伤的侍者
+[第 14 回合·对方] 获得 受伤的侍者
+[第 14 回合·对方] 打出 随从「受伤的侍者」 [金] 3/8<吸血。战吼：对本随从造成4点伤害。>
+[第 14 回合·对方] 受伤的侍者效果 治疗 对方英雄 血28→30
+[第 14 回合·对方] 打出 随从「凯洛斯的蛋」 0/3<亡语：召唤一枚轻微开裂的蛋。（破壳5次即可孵化为一只20/20并具有嘲讽的野兽！）>
+[第 15 回合·我方] 抽牌 强固<获得3点护甲值。对一个敌方随从造成等同于你护甲值的伤害。>
+[第 15 回合·我方] 打出 随从「破链灾星霍格」 10/10<嘲讽。对战开始时：复制你套牌中所有其他传说卡牌。>
+[第 15 回合·我方] 攻击：奥卓克希昂 6/7 → 受伤的侍者 3/4
+[第 15 回合·我方] 死亡：受伤的侍者 3/0
+[第 15 回合·我方] 攻击：拉格纳罗斯的士兵 2/1 → 对方英雄
+[第 16 回合·对方] 抽牌 1 张
+[第 16 回合·对方] 英雄技能 月亮的祝福<选择一张可用的牧师随从牌或法术牌置入你的手牌，其法力值消耗减少（>
+[第 16 回合·对方] 选择：逐月幼龙
+[第 16 回合·对方] 获得 逐月幼龙
+[第 16 回合·对方] 打出 随从「逐月幼龙」 [金] 3/6<扰魔。在你的回合结束时，随机获取一张龙牌。>
+[第 16 回合·对方] 获得 1 张牌（逐月幼龙效果获得）
+[第 17 回合·我方] 抽牌 为了荣耀！<抽两张牌。你的对手每控制一个随从，本牌的法力值消耗便减少（1）点。>
+# 实体总数 103 | 解析起始行 2 | 日志总行 12200
 ```
 
 ## Game board & advisor watcher (board / watch)
 
-> **`hs board` / `hs watch` are under active development**: the Hearthstone log format shifts with each patch, and coverage of complex in-game effects (transforms, tokens, bounce, ...) keeps expanding. If you hit a parse error or odd panel data, please open an [issue](https://github.com/OstrichHermit/hearthstone-cli/issues) or send a PR — all help welcome!
+> **Quality assurance**: board's parsing coverage has been through multiple rounds of full-game audits against real matches, with per-item regression checks (number reconciliation, event tracing, and edge cases like instant-concede games, truncated logs, and hero-card transforms). The Hearthstone log format still shifts with each patch — if a new patch breaks parsing, please open an [issue](https://github.com/OstrichHermit/hearthstone-cli/issues) or send a PR.
 
-`hs board` replays every packet from the last `CREATE_GAME` in the log and prints the final state panel, ready to be fed to an AI. Your side is auto-detected as the player whose hand is visible (only the local client sees its own hand); pin it with `--player=<name>` if unsure. `--stdin` reads the log from a pipe for testing. Each panel ends with an action recap that automatically covers the last three turns along turn boundaries — all of my previous turn, all of the opponent's last turn, and what has already happened on my current turn (`--events=N` to change how many turns, `--events=0` to hide it). Full effect text (no truncation) is attached where a card first enters view: on my draw events (opening deal and mulligan redraws are recorded as the "opening" turn), on the opponent's played cards, on both sides' summons, and on hero-power lines — so the AI can understand unfamiliar cards without a db lookup. Attack/death/play/summon events carry an at-the-moment ATK/HP snapshot (current HP already accounts for accumulated damage), so minion trades read at a glance. Heal and armor-gain events get their own lines (hero heals and hero-power armor included). Hero-power replacement/upgrade (Imbue, hero cards, forms) emits a "power change" event with the new power's effect text. Secrets and quests (both live in the SECRET zone, told apart by the QUEST tag) get play/trigger events — my plays carry the card name; the opponent's plays are anonymous and revealed on trigger with effect text; quest completions are worded as such, the panel shows both sides' active secret counts (quests included), and hand rows label quests as such. Fatigue gets its own line (Nth fatigue = hero takes N damage). Opponent draws are reported as counts only, never card names. The mulligan-phase panel prints the opening deal the same way, ready for keep-or-mulligan advice.
+`hs board` replays every packet from the last `CREATE_GAME` in the log and prints the complete panel at the current moment, ready to be fed to an AI. Your side is auto-detected as the player whose hand is visible (only the local client sees its own hand); pin it with `--player=<name>` if unsure. `--stdin` reads the log from a pipe for testing.
+
+**Panel layer**: game mode & build number, total turns / current turn / acting side, both sides' mana (`avail/total (used N)`, Overload locks tagged) and turn order (coin marked for going second), both heroes' HP/armor/weapon/power (replaced or imbued powers shown as-is), board minions and locations (ATK/HP + taunt / divine shield / windfury / frozen / dormant / stealth / poisonous / golden tags), your hand with cost/atk/hp (Forge preview `<Forge: card>`, powered-up / unplayable tags), both players' deck count / fatigue / corpses, quest progress slots (`quest x/y`, counted separately from secrets, reward announced on completion), and an endgame line (win/loss via lethal, concede, or fatigue; truncated logs are flagged instead of misreported). During the mulligan phase the panel prints the opening deal, ready for keep-or-mulligan advice.
+
+**Action recap**: automatically covers the last three turns along turn boundaries — all of my previous turn, all of the opponent's last turn, and what has already happened on my current turn (`--events=N` to change how many turns, `--events=0` to hide it). Events are stably ordered as they appear in the log:
+
+- Plays/summons carry full effect text (no truncation, so the AI needs no db lookup), at-the-moment ATK/HP snapshots, and battlecry targets; attacks carry the target and actual damage dealt (post-aura); hero powers carry effect text and built-in armor; deaths carry reborn info
+- The opening section carries mulligan semantics (opening hand → kept/swapped/drawn-in → coin) and START_OF_GAME trigger effects (e.g. "copy your legendaries" with every copied card named)
+- Engine-side settlements are fully recorded: deathrattle/triggered summons with their source (duplicates merged as ×N), deathrattle/trigger damage (fatal tagged), heals with their source, reborns, dormancy & awakenings, prepare discounts, discover/cataclysm choices, shuffle-into-deck summaries, end-of-turn gains with their source, deathrattle reveals (cast vs. revealed only), and burned cards (named)
+- Privacy by design: opponent draws are reported as counts only, never card names
 
 
 `hs watch start` runs a background daemon that tails Power.log; on the mulligan phase and on your turns it POSTs a fixed prompt to a self-hosted IM bridge (`POST /api/external/message`, Bearer-token auth), which then triggers AI advisor analysis in a Discord channel. Notes:
