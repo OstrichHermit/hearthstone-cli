@@ -602,10 +602,12 @@ def _plain_text(html):
     return " ".join(re.sub(r"<[^>]+>", "", text).split())
 
 
-def _ev_desc(lookup, game, eid, limit=48):
-    """事件实体的卡牌效果描述 (去 HTML, 超长截断 48 字符加…); 查不到/无描述返回空"""
+def _ev_desc(lookup, game, eid, limit=48, card_id=None):
+    """事件实体的卡牌效果描述 (去 HTML, 超长截断 48 字符加…); 查不到/无描述返回空;
+    card_id 显式传入时优先 (实体可能被任务链变形重建)"""
     ent = game["entities"].get(eid) if eid is not None else None
-    c = lookup.get(ent["cardId"]) if ent and ent["cardId"] else None
+    cid = card_id or (ent["cardId"] if ent and ent["cardId"] else "")
+    c = lookup.get(cid) if cid else None
     text = _plain_text((c or {}).get("text") or "")
     if not text:
         return ""
@@ -817,7 +819,13 @@ def _single_event_text(lookup, game, me, opp, ev):
         name = ev.get("name") or ""  # 打出时刻的名字/cardId 快照 (实体可能被任务链变形重建)
         if not name and ev.get("known"):
             name = _card_name(lookup, ev.get("card_id") or "", None)
-        return f"打出 {kind}「{name}」" if name else f"打出 {kind}"
+        if not name:
+            return f"打出 {kind}"  # 对方真奥秘匿名, 无名字也无描述
+        body = f"打出 {kind}「{name}」"
+        desc = _ev_desc(lookup, game, eid, card_id=ev.get("card_id"))
+        if desc:
+            body += f"<{desc}>"
+        return body
     if ev["type"] == "secret_trigger":
         ent = game["entities"].get(eid)
         kind = "任务" if ent and _tag_int(ent, "QUEST") == 1 else "奥秘"
