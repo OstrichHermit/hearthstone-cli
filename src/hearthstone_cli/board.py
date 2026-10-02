@@ -237,6 +237,16 @@ def _record_opening(game, ent):
     _record(game, "draw", eid=ent["id"], turn=0, actor=ent["controller"])
 
 
+def _stat_snap(game, eid):
+    """随从当前攻血快照 (当前血=HEALTH-DAMAGE, 炉石受伤走 DAMAGE 累积); 非随从/取不到返回 None"""
+    ent = game["entities"].get(eid) if eid is not None else None
+    if not ent or _ctype(ent) != "MINION":
+        return None
+    atk = _tag_int(ent, "ATK")
+    hp = (_tag_int(ent, "HEALTH") or ent["peak_hp"]) - _tag_int(ent, "DAMAGE")
+    return atk, max(hp, 0)
+
+
 def _watch_tag(game, ent, tag, value, old_zone, old_exh):
     """重放时同步收集行动事件; 换牌结束 (MULLIGAN_STATE=DONE) 前的初始铺场/换牌一律不记"""
     if tag == "TURN" and (_ctype(ent) == "GAME" or ent["id"] == 1):
@@ -287,17 +297,18 @@ def _zone_event(game, ent, old):
         top = game["blocks"][-1] if game["blocks"] else None
         if top and top["type"] == "PLAY" and _ref_id(top["entity"] or "") == ent["id"]:
             target = top["target"]  # 出牌块的 Target 即法术/武器指向
-        _record(game, "play", eid=ent["id"], ctype=ct, target_ref=target)
+        _record(game, "play", eid=ent["id"], ctype=ct, target_ref=target,
+                stat=_stat_snap(game, ent["id"]))
     elif old == "PLAY" and new == "HAND" and ct in PLAYABLE_TYPES:
         _record(game, "bounce", eid=ent["id"])  # 被移回手牌 (对方亡语/法术效果), 不记则场面凭空少人
     elif old == "SETASIDE" and new == "PLAY":
         if ct == "MINION":
-            _record(game, "summon", eid=ent["id"])
+            _record(game, "summon", eid=ent["id"], stat=_stat_snap(game, ent["id"]))
         elif ct == "WEAPON":
             _record(game, "equip", eid=ent["id"])
     elif new == "GRAVEYARD":
         if old == "PLAY" and ct in ("MINION", "HERO", "WEAPON", "LOCATION"):
-            _record(game, "death", eid=ent["id"])  # 法术/技能结算进坟场不算死亡
+            _record(game, "death", eid=ent["id"], stat=_stat_snap(game, ent["id"]))  # 法术/技能结算进坟场不算死亡
         elif old == "HAND":
             _record(game, "discard", eid=ent["id"])
     elif old == "SETASIDE" and new == "HAND":
@@ -390,8 +401,11 @@ def _handle_packet(game, payload):
         game["blocks"].append({"type": btype, "entity": ent_m.group(1) if ent_m else None,
                                "target": tgt_m.group(1) if tgt_m else None})
         if btype == "ATTACK" and game["gate"]:
-            _record(game, "attack", atk_ref=ent_m.group(1) if ent_m else "",
-                    tgt_ref=tgt_m.group(1) if tgt_m else "")
+            atk_ref = ent_m.group(1) if ent_m else ""
+            tgt_ref = tgt_m.group(1) if tgt_m else ""
+            _record(game, "attack", atk_ref=atk_ref, tgt_ref=tgt_ref,
+                    atk_stat=_stat_snap(game, _ref_id(atk_ref)),
+                    tgt_stat=_stat_snap(game, _ref_id(tgt_ref)))
         return
     if payload[:9] == "BLOCK_END" and game["blocks"]:
         game["blocks"].pop()
@@ -556,7 +570,7 @@ def _hero_line(lookup, game, controller):
     hero = next(iter(_of_side(game, controller, "PLAY", "HERO")), None)
     if not hero:
         return "英雄：无"
-    hp = _tag_int(hero, "HEALTH")
+    hp = (_tag_int(hero, "HEALTH") or hero["peak_hp"]) - _tag_int(hero, "DAMAGE")  # 当前血=HEALTH-DAMAGE
     max_hp = _tag_int(hero, "MAX_HEALTH") or hero["peak_hp"] or hp
     armor = _tag_int(hero, "ARMOR")
     weapon = next(iter(_of_side(game, controller, "PLAY", "WEAPON")), None)
@@ -583,7 +597,7 @@ def _minion_tags(ent):
 def _board_rows(lookup, game, controller):
     rows = []
     for i, m in enumerate(_of_side(game, controller, "PLAY", "MINION"), 1):
-        hp = _tag_int(m, "HEALTH") or m["peak_hp"]
+        hp = (_tag_int(m, "HEALTH") or m["peak_hp"]) - _tag_int(m, "DAMAGE")
         rows.append(f"  {i}. {_card_name(lookup, m["cardId"], m)} {_tag_int(m, 'ATK')}/{hp} {_minion_tags(m)}".rstrip())
     return rows
 
@@ -599,7 +613,7 @@ def _hand_rows(lookup, game, controller):
         ctype = TYPE_ZH.get(_ctype(h), _ctype(h) or "未知")
         body = f"{_card_name(lookup, h["cardId"], h)} {cost}费"
         if _ctype(h) == "MINION":
-            body += f" {_tag_int(h, 'ATK')}/{_tag_int(h, 'HEALTH') or h['peak_hp']}"
+            body += f" {_tag_int(h, 'ATK')}/{(_tag_int(h, 'HEALTH') or h['peak_hp']) - _tag_int(h, 'DAMAGE')}"
         rows.append(f"  {i}. {body} {ctype}")
     return rows
 
@@ -654,6 +668,11 @@ def _ev_side(game, me, opp, actor):
     return "未知"
 
 
+def _fmt_stat(stat):
+    """攻血快照 -> " a/b" 后缀; 无快照返回空"""
+    return f" {stat[0]}/{stat[1]}" if stat else ""
+
+
 def _single_event_text(lookup, game, me, opp, ev):
     eid = ev.get("eid")
     if ev["type"] == "play":
@@ -662,9 +681,8 @@ def _single_event_text(lookup, game, me, opp, ev):
         if ct == "HERO":
             return f"打出英雄牌 {name}"
         body = f"打出 {TYPE_ZH.get(ct, ct or '卡牌')}「{name}」"
-        m = game["entities"].get(eid)
-        if ct == "MINION" and m:
-            body += f"{_tag_int(m, 'ATK')}/{_tag_int(m, 'HEALTH') or m['peak_hp']}"
+        if ct == "MINION":
+            body += _fmt_stat(ev.get("stat"))  # 打出时刻快照 (最终态可能已被 buff/打伤)
         desc = ""
         if not (me and ev.get("actor") == me["controller"]):  # 我方牌描述已在抽牌时给过, 打出只补对方
             desc = _ev_desc(lookup, game, eid)
@@ -679,15 +697,13 @@ def _single_event_text(lookup, game, me, opp, ev):
         ref = ev.get("atk_ref") or ""
         atk_id = _ref_id(ref)
         name = _ev_name(lookup, game, atk_id, fallback=ref if ref[:1].isalpha() else "") or "未知随从"
-        return f"攻击：{name} → {_ev_target(lookup, game, me, opp, ev.get('tgt_ref')) or '未知目标'}"
+        return (f"攻击：{name}{_fmt_stat(ev.get('atk_stat'))}"
+                f" → {_ev_target(lookup, game, me, opp, ev.get('tgt_ref')) or '未知目标'}{_fmt_stat(ev.get('tgt_stat'))}")
     if ev["type"] == "power":
         return f"英雄技能 {_ev_name(lookup, game, eid, '未知技能')}"
     if ev["type"] == "summon":
         name = _ev_name(lookup, game, eid) or "未知随从"
-        m = game["entities"].get(eid)
-        body = f"召唤 {name}"
-        if m and _ctype(m) == "MINION":
-            body += f" {_tag_int(m, 'ATK')}/{_tag_int(m, 'HEALTH') or m['peak_hp']}"
+        body = f"召唤 {name}{_fmt_stat(ev.get('stat'))}"
         desc = _ev_desc(lookup, game, eid)
         if desc:
             body += f"<{desc}>"
@@ -697,7 +713,7 @@ def _single_event_text(lookup, game, me, opp, ev):
     if ev["type"] == "equip":
         return f"装备武器 {_ev_name(lookup, game, eid) or '未知武器'}"
     if ev["type"] == "death":
-        return f"死亡：{_ev_name(lookup, game, eid, '未知卡牌')}"
+        return f"死亡：{_ev_name(lookup, game, eid, '未知卡牌')}{_fmt_stat(ev.get('stat'))}"
     return str(ev["type"])
 
 
