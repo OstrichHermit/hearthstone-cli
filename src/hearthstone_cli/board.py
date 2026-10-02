@@ -87,6 +87,13 @@ TRIGGER_KW_RE = re.compile(r" TriggerKeyword=(\S+)")
 # 语义 = 该玩家确定保留的牌 (与实际换掉不一一对应), 换掉 = 起手 - 保留
 CHOSEN_ENT_RE = re.compile(r"^D [\d:.]+ GameState\.DebugPrintEntitiesChosen\(\) -\s+Entities\[\d+\]=\[(.+)\]\s*$")
 CHOSEN_PLAYER_RE = re.compile(r"\bplayer=(\d+)")
+# 对局中 GENERAL 选择 (发现/灾变类, 换牌 MULLIGAN 是另一类型不受影响):
+# DebugPrintEntityChoices 列选项 (id/玩家/Source), DebugPrintEntitiesChosen 确认所选 (双方都走这里, 对方无 SendChoices)
+EC_HEAD_RE = re.compile(
+    r"^D [\d:.]+ GameState\.DebugPrintEntityChoices\(\) - id=(\d+) Player=(\S+).*\bChoiceType=(\S+)")
+EC_CHOSEN_HEAD_RE = re.compile(
+    r"^D [\d:.]+ GameState\.DebugPrintEntitiesChosen\(\) - id=(\d+) Player=(\S+) EntitiesCount=(\d+)")
+EC_BRACKET_RE = re.compile(r"(\[.+\])\s*$")
 # 对局元信息行 (非 Power 行): D ... GameState.DebugPrintGame() - GameType=GT_CASUAL / FormatType=FT_STANDARD / BuildNumber=253216
 GAME_META_RE = re.compile(r"^D [\d:.]+ GameState\.DebugPrintGame\(\) - (BuildNumber|GameType|FormatType)=(\S+)\s*$")
 # 日志超限截断标记 (裸行): Truncating log, which has reached the size limit of 10000KB
@@ -126,11 +133,11 @@ HERO_POWER_DESC_BY_NAME = {
     "变形": "你的英雄本回合+1攻击力，并获得1点护甲值。", "匕首精通": "你的英雄本回合+1攻击力。",
 }
 
-# 随从状态标签 (按此顺序输出, 冻结附注最后)
+# 随从状态标签 (按此顺序输出, 冻结附注最后; DORMANT 单独处理: 值为剩余唤醒回合数, 显示 [休眠N])
 MINION_TAGS = [
     ("TAUNT", "嘲讽"), ("DIVINE_SHIELD", "圣盾"), ("WINDFURY", "风怒"), ("MEGA_WINDFURY", "巨型风怒"),
     ("STEALTH", "潜行"), ("LIFESTEAL", "吸血"), ("POISONOUS", "剧毒"), ("REBORN", "复生"),
-    ("DORMANT", "休眠"), ("CHARGE", "冲锋"), ("RUSH", "突袭"), ("CANT_ATTACK", "不可攻击"),
+    ("CHARGE", "冲锋"), ("RUSH", "突袭"), ("CANT_ATTACK", "不可攻击"),
     ("CANT_BE_ATTACKED", "无法被攻击"), ("SILENCED", "被沉默"), ("IMMUNE", "免疫"),
 ]
 TYPE_ZH = {"MINION": "随从", "SPELL": "法术", "WEAPON": "武器", "HERO": "英雄", "LOCATION": "地标", "HERO_POWER": "技能"}
@@ -165,6 +172,12 @@ def _new_game():
             # 技能自带护甲内联: hp_armor_pend=技能实体id->[累计护甲, 英雄实体id] 等技能事件消费;
             # heal_watch=待定治疗(同块 HEALTH 下调则改判光环回调), aura_drops=块内 HEALTH 下调记录
             "hp_armor_pend": {}, "heal_watch": [], "aura_drops": [],
+            # 对局中 GENERAL 选择: ec_choice=已列选项待确认, ec_confirm=已确认待出事件
+            "ec_choice": None, "ec_confirm": None,
+            # 亡语/触发块内 SHOW_ENTITY 揭示的实体 -> 亮牌观察 (CARDTYPE=SPELL 出事件, 被藏回/收尾清理)
+            "reveal_watch": {},
+            # 已在触发时刻出过事件的奥秘 (SHOW_ENTITY 揭示即触发, 坟场迁移时去重不再补发)
+            "secret_trig": set(),
             # 开局/换牌语义: dealt=起手发牌, mull_in=换入, kept=该方确定保留的实体 (换掉=dealt-kept)
             "opening": {"dealt": {}, "mull_in": {}, "kept": {}},
             # 对局元信息 (DebugPrintGame 行) 与日志截断标记; first_hero=双方初始英雄实体 id (职业显示锚点)
@@ -243,7 +256,9 @@ def _resolve(game, ref):
     return eid
 
 
-def _apply_tag(game, eid, tag, value):
+def _apply_tag(game, eid, tag, value, via_change=False):
+    """via_change=True 表示这条变化来自 TAG_CHANGE/HIDE_ENTITY packet (真实动作),
+    而非 FULL_ENTITY/SHOW_ENTITY 的初始 tag 快照 (休眠/预备类事件只认前者)"""
     ent = game["entities"].get(eid)
     if not ent:
         return
@@ -269,6 +284,7 @@ def _apply_tag(game, eid, tag, value):
     elif tag == "CARDTYPE":
         if ent["controller"] is not None and ent["id"] > 0 and _norm(value, CTYPE_BY_NUM) == "HERO":
             game["first_hero"].setdefault(ent["controller"], ent["id"])
+        _note_reveal_cardtype(game, ent, value)
     if tag == "PLAYSTATE" and _norm(value, PLAYSTATE_BY_NUM) == "CONCEDED":
         # 引擎发 CONCEDED 后必跟 LOST 覆盖, 最终态查不到投降; 重放时单独留痕供终局行判定
         ent["conceded"] = True
@@ -326,15 +342,19 @@ def _apply_tag(game, eid, tag, value):
                     aev["dmg_amt"] = (aev.get("dmg_amt") or 0) + (new_val - dmg_old)  # 实际伤害 (光环增幅可见)
         elif ent["zone"] == "PLAY" and _ctype(ent) in ("HERO", "MINION"):
             has_atk = any(b["type"] == "ATTACK" for b in game["blocks"])
-            has_play = any(b["type"] == "PLAY" for b in game["blocks"])
-            trig = None
-            for b in reversed(game["blocks"]):  # 内层优先: 嵌套时伤害执行者是最内层触发块
+            trig, trig_i = None, -1
+            for bi in range(len(game["blocks"]) - 1, -1, -1):  # 内层优先: 嵌套时伤害执行者是最内层触发块
+                b = game["blocks"][bi]
                 if b["type"] == "TRIGGER":
                     s = game["entities"].get(_ref_id(b.get("entity") or ""))
                     if s is not None and _ctype(s) != "PLAYER":  # 疲劳/阶段触发(玩家实体)不算来源
-                        trig = b
+                        trig, trig_i = b, bi
                         break
-            if trig is not None and not has_atk and not has_play:
+            # 归属看直接所属块: 触发块之内再无 PLAY 块即归触发结算 —— 清场法术 PLAY 块里
+            # 嵌套的亡语 TRIGGER 子块不再被外层 PLAY 误杀; PLAY/POWER 直接层的法术伤害
+            # 找不到触发块 (或触发块内又嵌 PLAY), 天然不会走到这里, 不重复报
+            if trig is not None and not has_atk and not any(
+                    b["type"] == "PLAY" for b in game["blocks"][trig_i + 1:]):
                 # 亡语/回合结束触发的伤害: 斩杀链回溯 (主动攻击/主动法术伤害已有事件, 不重复)
                 sid = _ref_id(trig.get("entity") or "")
                 kind = "deathrattle" if (trig.get("kw") == "DEATHRATTLE" or sid in game["dead_seen"]) else "trigger"
@@ -356,6 +376,29 @@ def _apply_tag(game, eid, tag, value):
         new_val = _num(value)
         if None not in (old_val, new_val) and new_val > old_val:  # 第 N 次疲劳=抽空牌库, 该玩家英雄扣 N 血
             _record(game, "fatigue", eid=ent["id"], count=new_val)
+    # 休眠/唤醒 (囚禁类效果): DORMANT 0→1 记囚禁 (来源取块上下文, 战吼块=战吼随从), 1→0 记苏醒;
+    # 只认真实 TAG_CHANGE, 实体初始快照自带 DORMANT 不重复报 (召唤事件已覆盖)
+    if (tag == "DORMANT" and via_change and game["gate"] and not game["grace"]
+            and ent["zone"] == "PLAY" and _ctype(ent) == "MINION"):
+        dor_new = _num(value)
+        dor_old = old_val if old_val is not None else 0
+        if dor_new == 1 and dor_old == 0:
+            kind, sid = _summon_ctx(game)
+            _record(game, "dormant", eid=ent["id"], src_kind=kind, src_id=sid)
+        elif dor_new == 0 and dor_old == 1:
+            _record(game, "awaken", eid=ent["id"])
+    # DECK_ACTION 块内 (手牌预备动作): 块实体的动作类 tag 变化留摘要供块结束汇总
+    if via_change and game["blocks"]:
+        for _b in reversed(game["blocks"]):
+            if "deck_act" in _b:
+                da = _b["deck_act"]
+                if ent["id"] == da["eid"]:
+                    if tag.startswith("PREPARE") or tag == "DECK_ACTION_COST":
+                        da["prepare"] = True
+                    elif (not tag.isdigit() and tag not in ("ZONE", "ZONE_POSITION", "EXHAUSTED")
+                          and all(t != tag for t, _, _ in da["tagsum"]) and len(da["tagsum"]) < 4):
+                        da["tagsum"].append((tag, old_val if old_val is not None else 0, value))
+                break
     # FULL_ENTITY 直接建在场面上的英雄技能 = 技能被替换/升级 (灌注/英雄牌/形态切换), 无 zone 迁移可监听;
     # 开局/换牌期创建的实体只清标记不记事件, 避免自带技能误报
     if ent.get("fresh"):
@@ -378,6 +421,14 @@ def _apply_tag(game, eid, tag, value):
             else:
                 ent["fresh"] = False
                 _record_gain_src(game, ent)  # 触发效果直接送入手牌 (逐月幼龙类)
+        elif ent["zone"] == "DECK":
+            if ent["controller"] is None:
+                pass  # CONTROLLER tag 在 ZONE 之后才到, 保持 fresh 等后续 tag 再定性
+            else:
+                if game["gate"] and not game["grace"] and game["blocks"]:
+                    # 效果生成直接进牌库的实体 (洗入牌库): 挂到所属块, 块结束出汇总事件
+                    game["blocks"][-1].setdefault("deck_new", []).append(ent["id"])
+                ent["fresh"] = False
         elif ent["zone"] and ent["zone"] != "PLAY":
             ent["fresh"] = False  # 迁移入场/库中实体不走技能变更事件
 
@@ -412,6 +463,63 @@ def _note_created(game, eid):
             break
 
 
+def _note_deck_create(game):
+    """FULL_ENTITY 建实体 -> 归入最内层 DECK_ACTION 块 (块结束时出实体变化摘要)"""
+    for b in reversed(game["blocks"]):
+        if "deck_act" in b:
+            b["deck_act"]["created"] += 1
+            break
+
+
+def _finish_deck_action(game, blk):
+    """DECK_ACTION 块结束 -> 手牌动作事件 (预备/囚禁类手牌操作, 通用按块内变化汇总):
+    花费 = 行动方 RESOURCES_USED 块内增量; 减费数值渲染时按 ATTACHED 附魔推断, 判不出带块内摘要"""
+    da = blk["deck_act"]
+    pel = game["entities"].get(da["pel_id"]) if da["pel_id"] is not None else None
+    if pel is not None and da["ctl"] is None:
+        da["ctl"] = pel["controller"]
+    if da["eid"] is None:
+        return  # 块实体引用不到 id (罕见引用形态), 无法命名, 不生成噪音事件
+    spent = None
+    if pel is not None and da["pre_res"] >= 0:
+        spent = max(_tag_int(pel, "RESOURCES_USED") - da["pre_res"], 0)
+    summary = "；".join(f"{t} {o}→{v}" for t, o, v in da["tagsum"])
+    if da["created"]:
+        summary = (summary + "；" if summary else "") + f"创建实体 {da['created']} 个"
+    _record(game, "deck_action", actor=da["ctl"], eid=da["eid"], spent=spent,
+            prepare=da["prepare"], summary=summary)
+
+
+def _deck_cost_cut(lookup, game, eid):
+    """DECK_ACTION 减费推断: ATTACHED 到该实体的附魔, 卡文本含减费且带 TAG_SCRIPT_DATA_NUM_1
+    数值 -> 累计减费; 原费取卡库 cost, 兜底 TAG_LAST_KNOWN_COST_IN_HAND; 判不出返回 None"""
+    ent = game["entities"].get(eid)
+    if not ent:
+        return None
+    cut = 0
+    for e in game["entities"].values():
+        if _ctype(e) != "ENCHANTMENT" or _tag_int(e, "ATTACHED") != eid:
+            continue
+        cid = e["cardId"] or e.get("seen_cardid") or ""  # 附魔用完即藏回, 曾见名兜底
+        if not cid:
+            continue
+        text = (lookup.get(cid) or {}).get("text") or ""
+        if "消耗减少" in text or "费用减少" in text or "费用降低" in text:
+            n = _tag_int(e, "TAG_SCRIPT_DATA_NUM_1")
+            if n > 0:
+                cut += n
+    if not cut:
+        return None
+    c = lookup.get(ent["cardId"]) if ent["cardId"] else None
+    base = c.get("cost") if c else None
+    if base is None:
+        base = _tag_int(ent, "TAG_LAST_KNOWN_COST_IN_HAND") or None
+    if base is None:
+        return None
+    now = max(base - cut, 0)
+    return (base, now) if now < base else None
+
+
 def _finish_sog(game, blk):
     """开局触发块结束 -> 汇总事件: 触发源 + 复制洗入牌库的张数/卡名 + 替换的英雄技能"""
     info = blk["sog"]
@@ -431,6 +539,143 @@ def _finish_sog(game, blk):
     _record(game, "sog", turn=0,
             actor=src["controller"] if src and src["controller"] is not None else None,
             src=src_id, copies=copies, power=power)
+
+
+def _handle_entity_choices(game, line):
+    """对局中 GENERAL 选择列选项 (发现/灾变类): 记 id/玩家/Source/选项实体, 等 EntitiesChosen 确认。
+    只认 ChoiceType=GENERAL, 换牌 MULLIGAN/战吼 TARGET 不进此状态, 不与开局处理重复"""
+    m = EC_HEAD_RE.match(line)
+    if m:
+        game["ec_choice"] = ({"id": int(m.group(1)), "player": m.group(2).strip(),
+                              "src": None, "options": []}
+                             if m.group(3) == "GENERAL" else None)
+        return
+    ch = game.get("ec_choice")
+    if ch is None:
+        return
+    body = line.split("GameState.DebugPrintEntityChoices() - ", 1)
+    body = body[1] if len(body) == 2 else ""
+    if body.startswith("Source="):
+        ch["src"] = _ref_id(body[7:].strip())
+        return
+    bm = EC_BRACKET_RE.search(body)
+    if bm:
+        eid = _ref_id(bm.group(1))
+        if eid is not None:
+            ch["options"].append(eid)
+
+
+def _handle_entities_chosen(game, line):
+    """EntitiesChosen 双语义: 换牌期 = 保留选择 (kept, 原逻辑不动);
+    对局中 = GENERAL 选择确认 -> 「选择：选项名」事件 (对方选择也走这里, 无 SendChoices 行)"""
+    if not game["gate"] or game["grace"]:
+        ce = CHOSEN_ENT_RE.match(line)
+        if ce:
+            pm = CHOSEN_PLAYER_RE.search(ce.group(1))
+            idm = BRACKET_ID_RE.search(ce.group(1))
+            if pm and idm:
+                ctl, eid = int(pm.group(1)), int(idm.group(1))
+                lst = game["opening"]["kept"].setdefault(ctl, [])
+                if eid not in lst:
+                    lst.append(eid)
+        return
+    cm = EC_CHOSEN_HEAD_RE.match(line)
+    if cm:
+        ch = game.get("ec_choice")
+        game["ec_confirm"] = ({"player": cm.group(2).strip(), "total": _num(cm.group(3)) or 1,
+                               "chosen": []}
+                              if ch is not None and ch["id"] == int(cm.group(1)) else None)
+        return
+    cf = game.get("ec_confirm")
+    if cf is None:
+        return
+    ce = CHOSEN_ENT_RE.match(line)
+    if ce:
+        idm = BRACKET_ID_RE.search(ce.group(1))
+        eid = int(idm.group(1)) if idm else None
+        if eid is not None and eid not in cf["chosen"]:
+            cf["chosen"].append(eid)
+        if len(cf["chosen"]) >= cf["total"]:
+            _emit_choose(game, cf)
+            game["ec_confirm"], game["ec_choice"] = None, None
+
+
+def _emit_choose(game, cf):
+    """GENERAL 选择确认 -> 选择事件 (选项实体留 id, 渲染时解名: 对方后来打出的发现牌也能对上名字)"""
+    if not cf["chosen"]:
+        return
+    ctl = None
+    peid = game["names"].get(cf["player"])
+    pent = game["entities"].get(peid) if peid is not None else None
+    if pent is not None and _ctype(pent) == "PLAYER":
+        ctl = pent["controller"]
+    _record(game, "choose", actor=ctl, eids=list(cf["chosen"]))
+
+
+def _finish_deck_new(game, blk, ctx):
+    """块结束 -> 块内生成直接进牌库的实体汇总事件 (洗入牌库 N 张（来源效果）, 卡名可见才带):
+    灾变类选择/触发效果洗牌; 开局霍格式复制在 gate 开闸前, 仍由 sog 事件覆盖, 不重复"""
+    if not game["gate"] or game["grace"]:
+        return
+    by_ctl = {}
+    for eid in blk["deck_new"]:
+        ent = game["entities"].get(eid)
+        if ent is not None and ent["controller"] is not None:
+            by_ctl.setdefault(ent["controller"], []).append(eid)
+    for ctl, eids in by_ctl.items():
+        _record(game, "shuffle", actor=ctl, eids=eids, count=len(eids),
+                src_kind=ctx[0] if ctx else "effect", src_id=ctx[1] if ctx else None)
+
+
+def _reveal_kind(game, info):
+    """亮牌来源类别: 触发块_keyword 是亡语 (或来源实体已死亡) 判亡语, 否则普通触发"""
+    sid = info.get("src_id")
+    if info.get("kw") == "DEATHRATTLE" or (sid is not None and sid in game["dead_seen"]):
+        return "deathrattle"
+    return "trigger"
+
+
+def _note_reveal(game, eid):
+    """亡语块内 SHOW_ENTITY 揭示隐藏实体 (雷鸣流云亡语亮出吸收的法术): 挂观察等 CARDTYPE 定性
+    (只有法术报亮牌), 块内 POWER/PLAY 块以它为源结算 = 已施放; 被藏回 (REVEALED 后 HIDE) =
+    过场动画, 撤回。非亡语触发 (兆示自亮/阶段触发) 不挂, 避免噪音"""
+    inner = next((b for b in reversed(game["blocks"]) if b["type"] == "TRIGGER"), None)
+    if inner is None:
+        return
+    info = {"depth": len(game["blocks"]), "src_id": _ref_id(inner.get("entity") or ""),
+            "kw": inner.get("kw"), "hidden": False, "ev": None}
+    if _reveal_kind(game, info) != "deathrattle":
+        return
+    game["reveal_watch"][eid] = info
+
+
+def _note_reveal_cardtype(game, ent, value):
+    """揭示实体定性为法术 -> 立即出亮牌事件 (占位: 事件顺序紧跟死亡/触发, 施放标记后补)"""
+    info = game["reveal_watch"].get(ent["id"])
+    if (info is None or info.get("ev") is not None or info.get("hidden")
+            or _norm(value, CTYPE_BY_NUM) != "SPELL" or ent["controller"] is None
+            or not game["gate"] or game["grace"]):
+        return
+    info["ev"] = _record(game, "reveal", actor=ent["controller"], eid=ent["id"],
+                         src_kind=_reveal_kind(game, info), src_id=info.get("src_id"), cast=False)
+
+
+def _finalize_reveal(game, eid):
+    """亮牌观察收尾 (所属块关闭): 被藏回的过场揭示撤回事件, 其余保留 (cast 标记已定)"""
+    info = game["reveal_watch"].pop(eid)
+    ev = info.get("ev")
+    if info.get("hidden"):
+        if ev is not None and ev in game["events"]:
+            game["events"].remove(ev)
+        return
+    if ev is not None:
+        return
+    ent = game["entities"].get(eid)
+    if (ent is None or _ctype(ent) != "SPELL" or ent["controller"] is None
+            or not game["gate"] or game["grace"]):
+        return
+    _record(game, "reveal", actor=ent["controller"], eid=eid,
+            src_kind=_reveal_kind(game, info), src_id=info.get("src_id"), cast=False)
 
 
 def _stat_snap(game, eid):
@@ -638,7 +883,9 @@ def _record_effect_summon(game, ent):
 
 
 def _record_gain_src(game, ent):
-    """TRIGGER 块内直接建在手牌的获得 -> 带来源获得事件 (逐月幼龙类回合结束送牌)"""
+    """块内直接建在手牌的获得 -> 带来源获得事件:
+    TRIGGER 块 = 触发效果 (逐月幼龙类回合结束送牌);
+    PLAY 块且块实体是随从 = 战吼生成进手牌 (对方手牌否则无中生有)"""
     if ent["controller"] is None or not game["blocks"]:
         return
     for b in reversed(game["blocks"]):
@@ -648,6 +895,14 @@ def _record_gain_src(game, ent):
         sent = game["entities"].get(sid)
         if sent is not None and _ctype(sent) != "PLAYER":  # 疲劳/阶段类触发(玩家实体)不算来源
             _record(game, "gain_src", actor=ent["controller"], eid=ent["id"], src_kind="trigger", src_id=sid)
+        return
+    for b in reversed(game["blocks"]):  # 战吼: 内层 PLAY 块实体是随从 -> 归该随从战吼 (法术块不归)
+        if b["type"] != "PLAY":
+            continue
+        sid = _ref_id(b.get("entity") or "")
+        sent = game["entities"].get(sid)
+        if sent is not None and _ctype(sent) == "MINION":
+            _record(game, "gain_src", actor=ent["controller"], eid=ent["id"], src_kind="battlecry", src_id=sid)
         return
 
 
@@ -695,7 +950,11 @@ def _watch_tag(game, ent, tag, value, old_zone, old_exh):
         _zone_event(game, ent, old_zone)
     elif (tag == "EXHAUSTED" and _num(value) == 1 and old_exh != 1
           and _ctype(ent) == "HERO_POWER" and ent["zone"] == "PLAY"):
-        pev = _record(game, "power", eid=ent["id"])
+        # 块起点已出过技能事件 (power_ev) 则复用, 防止重复; 无块上下文 (EXHAUSTED 迟到) 才补发
+        pev = next((b["power_ev"] for b in reversed(game["blocks"])
+                    if "power_ev" in b and b["power_ev"].get("eid") == ent["id"]), None)
+        if pev is None:
+            pev = _record(game, "power", eid=ent["id"])
         pend = game["hp_armor_pend"].pop(ent["id"], None)
         if pend:  # 技能块内攒下的护甲内联到技能行 (如 全副武装！（+2 护甲）)
             pev["armor"] = pend[0]
@@ -720,7 +979,9 @@ def _zone_event(game, ent, old):
         if match_blk:
             target = match_blk["target"]  # 出牌块的 Target 即法术/武器指向
         ev = _record(game, "play", eid=ent["id"], ctype=ct, target_ref=target,
-                     stat=_stat_snap(game, ent["id"]))
+                     stat=_stat_snap(game, ent["id"]),
+                     forge_pid=_tag_int(ent, "DISPLAY_ENTITY_ON_MOUSEOVER") or None)
+        # 兆示 (Forge) 预览指针打牌瞬间快照: 引擎随后立刻把它清 0, 最终态查不到
         if match_blk:
             match_blk["play_ev"] = ev  # 战吼对其他实体的影响 tag 回填到此事件 (→ 目标)
             match_blk["pre_ids"] = {e["id"] for e in game["entities"].values() if e["zone"] == "PLAY"}
@@ -747,7 +1008,10 @@ def _zone_event(game, ent, old):
         _reborn_backfill(game, game["death_evs"].get(ent["id"]), ent["id"])
     elif new == "GRAVEYARD":
         if old == "SECRET":
-            _record(game, "secret_trigger", eid=ent["id"])  # 奥秘触发后进坟场, cardId 此时已揭示
+            # 触发时刻已在 SHOW_ENTITY 揭示时出过事件 (secret_trig), 这里只兜底没走揭示路径的
+            # (被效果直接清掉进坟场等), 保持原口径
+            if ent["id"] not in game["secret_trig"]:
+                _record(game, "secret_trigger", eid=ent["id"])  # 奥秘触发后进坟场, cardId 此时已揭示
         elif old == "PLAY" and ct in ("MINION", "HERO", "WEAPON", "LOCATION"):
             ev = _record(game, "death", eid=ent["id"], stat=_stat_snap(game, ent["id"]))  # 法术/技能结算进坟场不算死亡
             game["dead_seen"].add(ent["id"])  # 亡语块判定 + 复生回填锚点
@@ -804,12 +1068,14 @@ def _handle_packet(game, payload):
         eid = int(m.group(1))
         game["cur"] = _create_entity_by_id(game, eid, m.group(2))
         _note_created(game, eid)
+        _note_deck_create(game)
         return
     m = FULL_ENTITY_RE.match(payload)
     if m:
         eid = _create_entity(game, m.group(1), m.group(2))
         if eid is not None:
             _note_created(game, eid)
+        _note_deck_create(game)
         game["cur"] = eid
         return
     m = SHOW_ENTITY_RE.match(payload)
@@ -817,7 +1083,18 @@ def _handle_packet(game, payload):
         eid = _resolve(game, m.group(1))
         ent = game["entities"].get(eid)
         if ent:
+            revealed_new = not ent["cardId"] and m.group(2)
             ent["cardId"] = m.group(2)
+            # 隐藏奥秘被揭示 = 奥秘触发时刻 (揭示紧跟触发块/触发效果之前)。原先等 SECRET->GRAVEYARD
+            # 迁移才补发, 但迁移在触发块收尾, 事件会排到触发效果 (如冰冻陷阱回手) 之后, 次序颠倒
+            if (revealed_new and game["gate"] and not game["grace"]
+                    and ent["zone"] == "SECRET" and eid not in game["secret_trig"]):
+                game["secret_trig"].add(eid)
+                _record(game, "secret_trigger", eid=eid)
+            # 亡语/触发块内首次揭示隐藏实体 (雷鸣流云亡语亮出吸收的法术): 挂观察等定性
+            if (revealed_new and game["gate"] and not game["grace"]
+                    and any(b["type"] == "TRIGGER" for b in game["blocks"])):
+                _note_reveal(game, eid)
             # 起手直接建在手牌区的卡 (后手整手/幸运币) 没有区域迁移, 靠揭示时机记开局发牌
             if (not game["gate"] or game["grace"]) and ent["zone"] == "HAND" and ent["cardId"]:
                 _record_opening(game, ent)
@@ -831,8 +1108,11 @@ def _handle_packet(game, payload):
             if ent["cardId"]:
                 ent["seen_cardid"] = ent["cardId"]  # 曾揭示后又被藏回 (开局触发源换回牌库), 留名兜底
             ent["cardId"] = ""
+        info = game["reveal_watch"].get(eid)
+        if info is not None:
+            info["hidden"] = True  # 亮出随即藏回 = 过场动画 (野兽绊索洗牌), 收尾时撤回
         if m.group(2):
-            _apply_tag(game, eid, m.group(2), m.group(3) or "")
+            _apply_tag(game, eid, m.group(2), m.group(3) or "", via_change=True)
         game["cur"] = eid
         return
     m = TAG_CHANGE_RE.match(payload)
@@ -850,7 +1130,7 @@ def _handle_packet(game, payload):
                 p["name"] = ent["name"]
                 del game["entities"][eid]
                 eid = p["id"]
-        _apply_tag(game, eid, tag, val)
+        _apply_tag(game, eid, tag, val, via_change=True)
         return
     m = CHANGE_ENTITY_RE.match(payload)
     if m:
@@ -873,8 +1153,34 @@ def _handle_packet(game, payload):
                "kw": kw_m.group(1) if kw_m else None}
         game["blk_seq"] += 1
         blk["seq"] = game["blk_seq"]
+        rid = _ref_id(blk["entity"] or "") if blk["entity"] else None
+        if rid is not None and btype in ("POWER", "PLAY", "TRIGGER") and rid in game["reveal_watch"]:
+            info = game["reveal_watch"][rid]
+            if info.get("ev") is not None:
+                # 亮出的牌有以它为源的结算块 = 已施放 (POWER=直接结算, TRIGGER=施放时施法 CASTS_WHEN_DRAWN)
+                info["ev"]["cast"] = True
+        if btype in ("PLAY", "POWER") and rid is not None and not any("power_ev" in b for b in game["blocks"]):
+            # 英雄技能启用: 块起点即按键时刻, 立即出事件。原先等块尾 EXHAUSTED=1 才补发,
+            # 技能块内触发的效果 (甲龙攻击/灌注获得) 会排到技能前面, 次序颠倒
+            pent = game["entities"].get(rid)
+            if pent is not None and _ctype(pent) == "HERO_POWER" and pent["zone"] == "PLAY":
+                ev = _record(game, "power", eid=rid)
+                blk["power_ev"] = ev
+                pend = game["hp_armor_pend"].pop(rid, None)
+                if pend:
+                    ev["armor"] = pend[0]
         if btype == "TRIGGER" and blk["kw"] == "START_OF_GAME_KEYWORD":
             blk["sog"] = {"src": blk["entity"], "created": []}  # 开局触发: 块结束出汇总事件
+        if btype == "DECK_ACTION" and game["gate"] and not game["grace"]:
+            # 手牌预备动作块 (预备/囚禁类手牌操作): 记块实体与行动方, 块结束出事件
+            bid = _ref_id(blk["entity"] or "")
+            bent = game["entities"].get(bid) if bid is not None else None
+            ctl = bent["controller"] if bent is not None else None
+            pel = next((p for p in _players(game) if p["controller"] == ctl), None) if ctl is not None else None
+            blk["deck_act"] = {"eid": bid, "ctl": ctl,
+                               "pre_res": _tag_int(pel, "RESOURCES_USED", -1) if pel is not None else -1,
+                               "pel_id": pel["id"] if pel is not None else None,
+                               "prepare": False, "created": 0, "tagsum": []}
         game["blocks"].append(blk)
         if btype == "ATTACK" and game["gate"]:
             atk_ref = ent_m.group(1) if ent_m else ""
@@ -885,6 +1191,7 @@ def _handle_packet(game, payload):
             blk["atk_ev"] = ev  # Target=0 的脚本攻击: 块内 PROPOSED_DEFENDER/受击伤害反解目标
         return
     if payload[:9] == "BLOCK_END" and game["blocks"]:
+        dn_ctx = _summon_ctx(game) if "deck_new" in game["blocks"][-1] else None
         blk = game["blocks"].pop()
         game["cur"] = None
         if blk["type"] == "ATTACK":
@@ -893,9 +1200,15 @@ def _handle_packet(game, payload):
             if ev is not None and dt is not None and ev.get("tgt_ref") in (None, "0", "-1"):
                 ev["tgt_ref"] = str(dt)
                 game["pending_stats"].append({"ev": ev, "depth": len(game["blocks"]), "key": "tgt_stat", "eid": dt})
+        if "deck_act" in blk:
+            _finish_deck_action(game, blk)
         _settle_stats(game)
         if "sog" in blk:
             _finish_sog(game, blk)
+        if blk.get("deck_new"):
+            _finish_deck_new(game, blk, dn_ctx)
+        for k in [e for e, v in game["reveal_watch"].items() if v["depth"] > len(game["blocks"])]:
+            _finalize_reveal(game, k)  # 归属块已关闭: 藏回的撤回, 存活的亮牌事件定稿
         return
     # META_DATA 等: 最终状态重放不需要, 忽略
 
@@ -905,7 +1218,9 @@ def parse_power_log(lines):
     game, start_line, total = None, 0, 0
     for lineno, raw in enumerate(lines, 1):
         total = lineno
-        line = raw.rstrip("\r\n")
+        # 首行 \ufeff 前缀 (带 BOM 文件/PowerShell 管道喂 stdin) 会让 ^D 锚点的
+        # CREATE_GAME/元信息正则失配, 致 --log 与 --stdin 解析结果不一致, 统一剥掉
+        line = raw.lstrip("\ufeff").rstrip("\r\n")
         tm = TRUNCATE_RE.search(line)  # 日志超限截断标记 (裸行): 出现在最后一个 CREATE_GAME 之后才算本局截断
         if tm:
             if game is not None:
@@ -927,19 +1242,16 @@ def parse_power_log(lines):
             if game is not None:
                 game["meta"][mm.group(1)] = mm.group(2)
             continue
+        if "GameState.DebugPrintEntityChoices() -" in line:
+            # 对局中 GENERAL 选择列选项 (发现/灾变类): 记选项, 确认行到来出事件
+            if game is not None:
+                _handle_entity_choices(game, line)
+            continue
         if "GameState.DebugPrintEntitiesChosen() -" in line:
-            # 换牌保留选择 (非 Power 行): Entities=确定保留的牌。只认换牌期 (对局中 GENERAL 选择同格式, 不能混入);
-            # 后手的选择可能晚于先手 DONE 开闸, 故宽限到 grace 结束
-            if game is not None and (not game["gate"] or game["grace"]):
-                ce = CHOSEN_ENT_RE.match(line)
-                if ce:
-                    pm = CHOSEN_PLAYER_RE.search(ce.group(1))
-                    idm = BRACKET_ID_RE.search(ce.group(1))
-                    if pm and idm:
-                        ctl, eid = int(pm.group(1)), int(idm.group(1))
-                        lst = game["opening"]["kept"].setdefault(ctl, [])
-                        if eid not in lst:
-                            lst.append(eid)
+            # 换牌期 = 保留选择 (后手的选择可能晚于先手 DONE 开闸, 故宽限到 grace 结束);
+            # 对局中 = GENERAL 选择确认 -> 「选择：选项名」事件
+            if game is not None:
+                _handle_entities_chosen(game, line)
             continue
         m = PREFIX_RE.match(line)
         if not m:
@@ -1154,12 +1466,40 @@ def detect_me(game, player_arg=None):
     return (None, None, True)
 
 
+_lower_idx_cache = None  # (lookup 对象, 小写 cardId 索引) 惰性缓存, 变体兜底用
+
+
+def _db_card(lookup, card_id):
+    """cardId -> 卡库条目 多级兜底: 精确 -> 全表小写 (大小写漂移) -> 皮肤/钻石/异画变体键
+    去后缀逐级回退 (END_030t2 -> END_030t -> END_030); 全部落空返回 None"""
+    if not card_id or "UNKNOWN ENTITY" in card_id:
+        return None
+    c = lookup.get(card_id)
+    if c is not None:
+        return c
+    global _lower_idx_cache
+    if _lower_idx_cache is None or _lower_idx_cache[0] is not lookup:
+        _lower_idx_cache = (lookup, {str(k).lower(): v for k, v in lookup.items() if k})
+    low = card_id.lower()
+    idx = _lower_idx_cache[1]
+    c = idx.get(low)
+    if c is not None:
+        return c
+    cid = low
+    while len(cid) > 5:  # 变体后缀 (t2/e/h 等) 逐级剥掉重试, 命中最近的基础卡; 留长度下限防误配短键
+        cid = cid[:-1]
+        c = lookup.get(cid) or idx.get(cid)
+        if c is not None:
+            return c
+    return None
+
+
 def _card_name(lookup, card_id, ent=None):
     if not card_id:
         return "未知卡牌" if not (ent and ent.get("name")) else ent["name"]
     if "UNKNOWN ENTITY" in card_id:  # 新版日志 token 占位文本, 不是真实 cardId
         return "未知随从"
-    c = lookup.get(card_id)
+    c = _db_card(lookup, card_id)
     if c and c.get("name"):
         return c["name"]
     if card_id in HERO_POWER_NAMES:
@@ -1172,6 +1512,8 @@ def _card_name(lookup, card_id, ent=None):
 def _plain_text(html):
     """卡牌 HTML 描述 -> 纯文本 (去标签 + 取 @ 升级段第一段 + 占位符转X + 压缩空白)"""
     text = (html or "").replace("<b>@</b>", "X")  # 段内动态数值占位 (@ 包在标签里, 区别于段分隔符)
+    if "兆示" in text:  # 兆示卡多级 text 用 "</i>1" 裸数字拼接各等级 (无 @ 分隔), 只取基础级避免重复句堆叠
+        text = re.split(r"</i>1(?![0-9])", text)[0]
     text = text.split("@")[0]  # 多阶段升级卡 text 用裸 @ 拼接多份, 取第一段
     text = re.sub(r"\{\d+\}", "X", text)  # {0} 等动态数值占位符
     text = re.sub(r"\$[a-zA-Z](?=\d)", "", text)  # $d2 等变量标记 ($字母+数字)
@@ -1184,7 +1526,7 @@ def _ev_desc(lookup, game, eid, card_id=None):
     查不到/无描述返回空; card_id 显式传入时优先 (实体可能被任务链变形重建)"""
     ent = game["entities"].get(eid) if eid is not None else None
     cid = card_id or (ent["cardId"] if ent and ent["cardId"] else "")
-    c = lookup.get(cid) if cid else None
+    c = _db_card(lookup, cid) if cid else None
     return _plain_text((c or {}).get("text") or "")
 
 
@@ -1249,6 +1591,9 @@ def _minion_tags(ent, cur_turn=0):
     for key, zh in MINION_TAGS:
         if _tag_int(ent, key) == 1:
             tags.append(f"[{zh}]")
+    dor = _tag_int(ent, "DORMANT")  # 休眠: 值=剩余唤醒回合数, 1 (或只标休眠无倒计时) 显示 [休眠]
+    if dor >= 1:
+        tags.append(f"[休眠{dor}]" if dor > 1 else "[休眠]")
     # 本回合上场: 按日志 JUST_PLAYED tag 实际当前值渲染 (引擎回合结束清 0, 不会残留);
     # 上场回合号与当前回合对账兜底 (个别召唤不带 JUST_PLAYED tag)。
     # 不能用 EXHAUSTED 判定: 登场疲劳/攻击后的 EXHAUSTED=1 会跨回合残留, 标记过期
@@ -1279,6 +1624,16 @@ def _board_rows(lookup, game, controller):
     return rows
 
 
+def _forge_prev_name(lookup, game, ent):
+    """兆示 (Forge) 预览实体卡名: DISPLAY_ENTITY_ON_MOUSEOVER 指向的暂存区预览实体
+    (打出/抽到兆示牌时引擎建的 3 个 PREMIUM 变体之一)。预览对我方不可见时无 cardId
+    -> 返回 None, 调用方省略后缀 (不显示'兆示：未知')"""
+    pid = _tag_int(ent, "DISPLAY_ENTITY_ON_MOUSEOVER") if ent else 0
+    prev = game["entities"].get(pid) if pid > 0 else None
+    cid = (prev["cardId"] if prev else "") or (prev.get("seen_cardid") if prev else "") or ""
+    return _card_name(lookup, cid, prev) if cid else None
+
+
 def _hand_rows(lookup, game, controller):
     rows = []
     hand = sorted((e for e in _in_zone(game, controller, "HAND")), key=lambda e: (e["zone_pos"], e["id"]))
@@ -1298,6 +1653,9 @@ def _hand_rows(lookup, game, controller):
             marks += " [不可打出]"  # 当前条件不满足, 本回合无法使用
         if _tag_int(h, "PREMIUM") >= 1:
             marks += " [金]"
+        forge = _forge_prev_name(lookup, game, h)
+        if forge:
+            marks += f" <兆示：{forge}>"
         rows.append(f"  {i}. {body} {ctype}{marks}")
     return rows
 
@@ -1406,19 +1764,30 @@ def _single_event_text(lookup, game, me, opp, ev):
         body = f"打出 {TYPE_ZH.get(ct, ct or '卡牌')}「{name}」{_gold_mark(lookup, game, eid)}"
         if ct == "MINION":
             body += _fmt_stat(ev.get("stat"))  # 打出时刻快照 (最终态可能已被 buff/打伤)
-        desc = ""
-        if not (me and ev.get("actor") == me["controller"]):  # 我方牌描述已在抽牌时给过, 打出只补对方
-            desc = _ev_desc(lookup, game, eid)
+        # 打出行稳定带卡牌关键词/描述 (抽牌时给过描述的是抽到的牌; 获得/召唤入手与库外来源的牌
+        # 从未展示过, 缺失会让决策线索不稳定——如 失控龙蛙 扰魔+嘲讽)
+        desc = _ev_desc(lookup, game, eid)
         if desc:
             body += f"<{desc}>"
-        if ct != "MINION":
-            tgt = _ev_target(lookup, game, me, opp, ev.get("target_ref"))
-            if tgt:
-                body += f"→ {tgt}"
+        # 块显式 Target = 打出指向 (法术/武器/战吼选定的目标, 随从战吼同样回填, 块内新建实体也可被指向);
+        # 随从指向未揭示实体 (如对方从自己手牌选牌) 时目标名不可知, 不渲染"未知目标"噪音
+        tref = ev.get("target_ref")
+        tgt = _ev_target(lookup, game, me, opp, tref)
+        if tgt and not (ct == "MINION" and tgt == "未知目标"):
+            body += f"→ {tgt}"
+        tid = _ref_id(tref) if tref else None  # 主目标已在 → 中显示, 影响类追加目标去重防双写
         tgts = [x for x in (_ev_target(lookup, game, me, opp, str(t))
-                            for t in ev.get("bc_tgts") or []) if x]
+                            for t in ev.get("bc_tgts") or []
+                            if not (tid and tid > 0 and str(t) == str(tid))) if x]
         if tgts:  # 战吼对其他实体的影响 (沉默/伤害/控制) -> 追加目标
-            body += f" → {'、'.join(tgts)}"
+            body += f" → {' ／ '.join(tgts)}"
+        if ev.get("forge_pid"):
+            # 兆示预览: 用打出时刻快照的指针 (引擎出牌块内已把 DISPLAY 清 0, 最终态查不到指向);
+            # 预览无 cardId (对方的兆示不可见) 时不显示, 不报'未知'
+            pent = game["entities"].get(ev["forge_pid"])
+            cid = (pent["cardId"] if pent else "") or (pent.get("seen_cardid") if pent else "") or ""
+            if cid:
+                body += f"（兆示 {_card_name(lookup, cid, pent)}）"
         return body
     if ev["type"] == "attack":
         ref = ev.get("atk_ref") or ""
@@ -1430,6 +1799,10 @@ def _single_event_text(lookup, game, me, opp, ev):
         if not tgt:
             return body
         body = f"{body} → {tgt}{_fmt_stat(ev.get('tgt_stat'))}"
+        tid = _ref_id(ev.get("tgt_ref") or "")
+        tent = game["entities"].get(tid) if tid is not None else None
+        if tent is not None and _tag_int(tent, "DORMANT") >= 1:
+            body += "（休眠中）"  # 攻击目标仍处休眠 (囚禁类效果唤醒前的异常窗口)
         amt = ev.get("dmg_amt")
         if amt and not (ev.get("atk_stat") and amt == ev["atk_stat"][0]):
             body += f"（伤害 {amt}）"  # 实际伤害与攻击力不符 (光环/临时增幅) 时标注
@@ -1553,7 +1926,7 @@ def _single_event_text(lookup, game, me, opp, ev):
         for ctl in sorted((c for c in by_ctl if c is not None), key=lambda c: (c != (me["controller"] if me else None), c)):
             eids = by_ctl[ctl]
             nms = [nm for nm in (_ev_name(lookup, game, eid) for eid in eids) if nm]
-            tail = f"（{'、'.join(nms)}）" if len(nms) == len(eids) else ("（卡名未知）" if not nms else f"（{'、'.join(nms)} 等）")
+            tail = f"（{' ／ '.join(nms)}）" if len(nms) == len(eids) else ("（卡名未知）" if not nms else f"（{' ／ '.join(nms)} 等）")
             parts.append(f"复制 {len(eids)} 张洗入{_ev_side(game, me, opp, ctl)}牌库{tail}")
         pw = ev.get("power")
         if pw is not None:
@@ -1561,10 +1934,52 @@ def _single_event_text(lookup, game, me, opp, ev):
         if not parts:
             return f"{name} 触发"
         return f"{name} 触发：{'，'.join(parts)}"
+    if ev["type"] == "choose":
+        eids = ev.get("eids") or []
+        nms = [nm for nm in (_ev_name(lookup, game, e) for e in eids) if nm]
+        if nms:
+            return "选择：" + " ／ ".join(nms) + ("" if len(nms) == len(eids) else " 等")
+        return f"选择 {len(eids)} 项"  # 选项全程未揭示 (对方发现), 只报动作
+    if ev["type"] == "shuffle":
+        eids = ev.get("eids") or []
+        n = ev.get("count") or len(eids)
+        body = f"洗入牌库 {n} 张"
+        src = _src_label(lookup, game, ev)
+        if src:
+            body += f"（{src}）"
+        nms = [nm for nm in (_ev_name(lookup, game, e) for e in eids) if nm]
+        if nms:
+            body += "：" + " ／ ".join(nms) + ("" if len(nms) == len(eids) else " 等")
+        return body
+    if ev["type"] == "reveal":
+        name = _ev_name(lookup, game, eid, "未知卡牌")
+        src = _src_label(lookup, game, ev) or "触发"
+        body = f"{src} 亮出 「{name}」"
+        return body + ("（已施放）" if ev.get("cast") else "（仅亮出，未施放）")
     if ev["type"] == "fatigue":
         n = ev.get("count")
         return f"疲劳 第 {n} 次（英雄扣 {n} 血）" if n is not None else "疲劳"
-    return str(ev["type"])
+    if ev["type"] == "deck_action":
+        name = _ev_name(lookup, game, eid, "未知卡牌")
+        spent = ev.get("spent")
+        cut = _deck_cost_cut(lookup, game, eid)
+        if ev.get("prepare"):
+            # 行动方已在行前缀 [第 N 回合·我方/对方] 标明, 正文不重复
+            body = (f"花费 {spent} 费 给 手牌中的{name} 预备" if spent is not None
+                    else f"给 手牌中的{name} 预备")
+        else:
+            body = f"对 手牌中的{name} 发动手牌动作"
+            if ev.get("summary"):
+                body += f"（{ev['summary']}）"
+        if cut:
+            body += f"（费用 {cut[0]}→{cut[1]}）"
+        return body
+    if ev["type"] == "dormant":
+        name = _ev_name(lookup, game, eid, "未知随从")
+        src = _src_label(lookup, game, ev)
+        return f"{src} 将 {name} [休眠]" if src else f"{name} 进入休眠"
+    if ev["type"] == "awaken":
+        return f"{_ev_name(lookup, game, eid, '未知随从')} 苏醒"
 
 
 def _event_lines(lookup, game, me, opp):
@@ -1600,7 +2015,7 @@ def _event_lines(lookup, game, me, opp):
                         for nm, eid_j in items:
                             desc = _ev_desc(lookup, game, eid_j)
                             parts.append(f"{nm}<{desc}>" if desc else nm)
-                        body += f"（{'、'.join(parts)}）"
+                        body += f"（{' ／ '.join(parts)}）"
                     lines.append((t, actor, body))
             else:
                 verb = "弃牌" if et == "discard" else "获得"
@@ -1639,7 +2054,7 @@ def _opening_lines(lookup, game, me, opp):
             continue
         if mine:
             nms = names_of(dealt)
-            out.append(f"[开局·我方] 起手 {len(dealt)} 张" + (f"（{'、'.join(nms)}）" if nms else ""))
+            out.append(f"[开局·我方] 起手 {len(dealt)} 张" + (f"（{' ／ '.join(nms)}）" if nms else ""))
         kept_raw = op["kept"].get(ctl)
         if kept_raw is None:
             continue  # 未提交保留选择 (秒投/异常局): 换掉无从谈起, 不输出换行
@@ -1650,10 +2065,10 @@ def _opening_lines(lookup, game, me, opp):
         if mine:
             out_n = names_of(out_e)
             body = f"[开局·我方] 保留 {len(dealt) - len(out_e)} 张换掉 "
-            body += "、".join(out_n) if out_n else f"{len(out_e)} 张"
+            body += " ／ ".join(out_n) if out_n else f"{len(out_e)} 张"
             if in_e:
                 in_n = names_of(in_e)
-                body += f"（换入 {'、'.join(in_n)}）" if in_n else f"（换入 {len(in_e)} 张）"
+                body += f"（换入 {' ／ '.join(in_n)}）" if in_n else f"（换入 {len(in_e)} 张）"
             out.append(body)
         else:
             out.append(f"[开局·对方] 保留 {len(dealt) - len(out_e)} 换 {len(out_e)} 张")
@@ -1689,15 +2104,27 @@ def _events_section(lookup, game, me, opp, turns=3, mulligan=False):
     return out
 
 
+def _mana_text(ent, mulligan):
+    """玩家实体的法力数值段: 可用/总（已用）; 过载追加简洁标注
+    (OVERLOAD_LOCKED=当前已被锁, OVERLOAD_OWED=下回合将锁, 都为 0 不显示)"""
+    if mulligan:
+        return "未开始"
+    res = _tag_int(ent, "RESOURCES")
+    used = _tag_int(ent, "RESOURCES_USED")
+    temp = _tag_int(ent, "TEMP_RESOURCES")
+    txt = f"{res - used + temp}/{res}（已用 {used}）"
+    locked, owed = _tag_int(ent, "OVERLOAD_LOCKED"), _tag_int(ent, "OVERLOAD_OWED")
+    if locked or owed:
+        txt += f" 过载{locked}" if locked else " 过载"
+        if owed:
+            txt += f"（下回合+{owed}）"
+    return txt
+
+
 def _mana_line(game, me, mulligan):
     if not me:
         return ""
-    if mulligan:
-        return "我的法力 未开始"
-    res = _tag_int(me, "RESOURCES")
-    used = _tag_int(me, "RESOURCES_USED")
-    temp = _tag_int(me, "TEMP_RESOURCES")
-    return f"我的法力 {res - used + temp}/{res}（已用 {used}）"
+    return f"我的法力 {_mana_text(me, mulligan)}"
 
 
 def render_panel(game, start_line, total, lookup, class_names, player_arg=None, events_turns=3):
@@ -1778,8 +2205,10 @@ def render_panel(game, start_line, total, lookup, class_names, player_arg=None, 
         head_txt = f"{name}：{pname}（{cls}）" if label else f"{pname}（{cls}）"
         if order_tag:
             head_txt += f"{order_tag} "
-        out.append(f"{head_txt}{stat}{corpse_txt}疲劳 {fatigue}" if label
-                   else f"{head_txt}手牌 {hand_n} 奥秘 {secrets} 牌库 {deck} {corpse_txt}疲劳 {fatigue}")
+        # 法力是公开信息: 对方 (及未知我方时的各方) 状态行补法力/过载段, 我方法力在面板头已有不重复
+        mana_txt = "" if label == "我方" else f" 法力 {_mana_text(p, mulligan)}"
+        out.append(f"{head_txt}{stat}{corpse_txt}疲劳 {fatigue}{mana_txt}" if label
+                   else f"{head_txt}手牌 {hand_n} 奥秘 {secrets} 牌库 {deck} {corpse_txt}疲劳 {fatigue}{mana_txt}")
         out.append(_hero_line(lookup, game, ctl))
         out.extend(_quest_lines(lookup, game, ctl))
         if not mulligan:  # 换牌阶段双方场面输出为空
