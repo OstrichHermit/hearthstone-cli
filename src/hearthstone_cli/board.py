@@ -246,6 +246,10 @@ def _apply_tag(game, eid, tag, value):
             _record(game, "heal", eid=ent["id"], hp=(max(base - old_val, 0), max(base - new_val, 0)))
         elif tag == "ARMOR" and _ctype(ent) == "HERO" and None not in (old_val, new_val) and new_val > old_val:
             _record(game, "armor", eid=ent["id"], gain=new_val - old_val)
+    if (tag == "FATIGUE" and _ctype(ent) == "PLAYER" and game["gate"] and not game["grace"]):
+        new_val = _num(value)
+        if None not in (old_val, new_val) and new_val > old_val:  # 第 N 次疲劳=抽空牌库, 该玩家英雄扣 N 血
+            _record(game, "fatigue", eid=ent["id"], count=new_val)
     # FULL_ENTITY 直接建在场面上的英雄技能 = 技能被替换/升级 (灌注/英雄牌/形态切换), 无 zone 迁移可监听;
     # 开局/换牌期创建的实体只清标记不记事件, 避免自带技能误报
     if ent.get("fresh"):
@@ -337,13 +341,17 @@ def _zone_event(game, ent, old):
                 stat=_stat_snap(game, ent["id"]))
     elif old == "PLAY" and new == "HAND" and ct in PLAYABLE_TYPES:
         _record(game, "bounce", eid=ent["id"])  # 被移回手牌 (对方亡语/法术效果), 不记则场面凭空少人
+    elif old == "HAND" and new == "SECRET":
+        _record(game, "secret_play", eid=ent["id"])  # 奥秘打出 (对方 cardId 隐藏, 触发时才揭示)
     elif old == "SETASIDE" and new == "PLAY":
         if ct == "MINION":
             _record(game, "summon", eid=ent["id"], stat=_stat_snap(game, ent["id"]))
         elif ct == "WEAPON":
             _record(game, "equip", eid=ent["id"])
     elif new == "GRAVEYARD":
-        if old == "PLAY" and ct in ("MINION", "HERO", "WEAPON", "LOCATION"):
+        if old == "SECRET":
+            _record(game, "secret_trigger", eid=ent["id"])  # 奥秘触发后进坟场, cardId 此时已揭示
+        elif old == "PLAY" and ct in ("MINION", "HERO", "WEAPON", "LOCATION"):
             _record(game, "death", eid=ent["id"], stat=_stat_snap(game, ent["id"]))  # 法术/技能结算进坟场不算死亡
         elif old == "HAND":
             _record(game, "discard", eid=ent["id"])
@@ -798,6 +806,19 @@ def _single_event_text(lookup, game, me, opp, ev):
         return f"装备武器 {_ev_name(lookup, game, eid) or '未知武器'}"
     if ev["type"] == "death":
         return f"死亡：{_ev_name(lookup, game, eid, '未知卡牌')}{_fmt_stat(ev.get('stat'))}"
+    if ev["type"] == "secret_play":
+        name = _ev_name(lookup, game, eid, "")
+        return f"打出 奥秘「{name}」" if name else "打出 奥秘"  # 对方奥秘 cardId 隐藏, 触发时才揭示
+    if ev["type"] == "secret_trigger":
+        name = _ev_name(lookup, game, eid, "未知奥秘")
+        body = f"奥秘触发 {name}"
+        desc = _ev_desc(lookup, game, eid)
+        if desc:
+            body += f"<{desc}>"
+        return body
+    if ev["type"] == "fatigue":
+        n = ev.get("count")
+        return f"疲劳 第 {n} 次（英雄扣 {n} 血）" if n is not None else "疲劳"
     return str(ev["type"])
 
 
@@ -930,10 +951,11 @@ def render_panel(game, start_line, total, lookup, class_names, player_arg=None, 
         name = label or pname
         cls = _side_class(lookup, class_names, next(iter(_of_side(game, ctl, "PLAY", "HERO")), None))
         fatigue = _tag_int(p, "FATIGUE")
-        stat = f"手牌 {len(_in_zone(game, ctl, 'HAND'))} " if label != "我方" else ""
+        secrets = len(_in_zone(game, ctl, "SECRET"))
+        stat = (f"手牌 {len(_in_zone(game, ctl, 'HAND'))} " if label != "我方" else "") + f"奥秘 {secrets} "
         # 不输出"牌库 N": 霍格复制传说等效果会让套牌超 30 张, 30 减法推算必不准, 干脆不给
         out.append(f"{name}：{pname}（{cls}）{stat}疲劳 {fatigue}" if label
-                   else f"{pname}（{cls}）手牌 {len(_in_zone(game, ctl, 'HAND'))} 疲劳 {fatigue}")
+                   else f"{pname}（{cls}）手牌 {len(_in_zone(game, ctl, 'HAND'))} 奥秘 {secrets} 疲劳 {fatigue}")
         out.append(_hero_line(lookup, game, ctl))
         if not mulligan:  # 换牌阶段双方场面输出为空
             board = _board_rows(lookup, game, ctl)
