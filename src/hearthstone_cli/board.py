@@ -92,6 +92,22 @@ HERO_POWER_NAMES = {
     "CS2_049": "图腾召唤", "CS2_101": "援军", "DS1h_292": "稳固射击",
     "CS2_017": "变形", "CS1h_001": "次级治疗术", "CS2_083b": "匕首精通",
 }
+# 经典技能描述兜底 (HearthstoneJSON 全量库缺基础技能条目, CS2_084 还被同名法术占用)
+HERO_POWER_TEXTS = {
+    "CS2_034": "造成1点伤害。", "CS2_056": "抽一张牌，你的英雄受到2点伤害。",
+    "CS2_084": "获得2点护甲值。", "CS2_049": "召唤一个随机基础图腾。",
+    "CS2_101": "召唤两个1/1的白银之手新兵。", "DS1h_292": "对敌方英雄造成2点伤害。",
+    "CS2_017": "你的英雄本回合+1攻击力，并获得1点护甲值。", "CS1h_001": "恢复2点生命值。",
+    "CS2_083b": "你的英雄本回合+1攻击力。",
+}
+# 按技能名的描述兜底: 经典技能的皮肤变体在 full 库里文本脏 (稳固射击变体自带重复段), 不可依赖
+HERO_POWER_DESC_BY_NAME = {
+    "全副武装": "获得2点护甲值。", "全副武装！": "获得2点护甲值。",
+    "稳固射击": "对敌方英雄造成2点伤害。", "次级治疗术": "恢复2点生命值。",
+    "火焰冲击": "造成1点伤害。", "生命分流": "抽一张牌，你的英雄失去2点生命值。",
+    "图腾召唤": "召唤一个随机基础图腾。", "援军": "召唤两个1/1的白银之手新兵。",
+    "变形": "你的英雄本回合+1攻击力，并获得1点护甲值。", "匕首精通": "你的英雄本回合+1攻击力。",
+}
 
 # 随从状态标签 (按此顺序输出, 冻结附注最后)
 MINION_TAGS = [
@@ -204,6 +220,7 @@ def _apply_tag(game, eid, tag, value):
     if not ent:
         return
     old_zone, old_exh = ent["zone"], _num(ent["tags"].get("EXHAUSTED"))
+    old_val = _num(ent["tags"].get(tag))
     ent["tags"][tag] = value
     if tag == "ZONE":
         ent["zone"] = _norm(value, ZONE_BY_NUM)
@@ -220,6 +237,15 @@ def _apply_tag(game, eid, tag, value):
         if n is not None:
             ent["peak_hp"] = max(ent["peak_hp"], n)  # 记录见过的最大生命, 推算满血
     _watch_tag(game, ent, tag, value, old_zone, old_exh)
+    # 正式对局中的回复类变化: DAMAGE 回落=治疗, ARMOR 上升=英雄加甲 (开局灌 tag/换牌宽限期不算;
+    # zone 限定 PLAY 挡掉手牌区卡牌自带 ARMOR 数据假象)
+    if game["gate"] and not game["grace"] and ent["zone"] == "PLAY":
+        new_val = _num(value)
+        if tag == "DAMAGE" and None not in (old_val, new_val) and new_val < old_val:
+            base = _tag_int(ent, "HEALTH") or ent["peak_hp"]
+            _record(game, "heal", eid=ent["id"], hp=(max(base - old_val, 0), max(base - new_val, 0)))
+        elif tag == "ARMOR" and _ctype(ent) == "HERO" and None not in (old_val, new_val) and new_val > old_val:
+            _record(game, "armor", eid=ent["id"], gain=new_val - old_val)
 
 
 def _record(game, etype, turn=None, actor=None, **kw):
@@ -545,9 +571,11 @@ def _card_name(lookup, card_id, ent=None):
 
 def _plain_text(html):
     """卡牌 HTML 描述 -> 纯文本 (去标签 + 取 @ 升级段第一段 + 占位符转X + 压缩空白)"""
-    text = (html or "").split("@")[0]  # 多阶段升级卡 text 用 @ 拼接多份, 取第一段
+    text = (html or "").replace("<b>@</b>", "X")  # 段内动态数值占位 (@ 包在标签里, 区别于段分隔符)
+    text = text.split("@")[0]  # 多阶段升级卡 text 用裸 @ 拼接多份, 取第一段
     text = re.sub(r"\{\d+\}", "X", text)  # {0} 等动态数值占位符
-    text = text.replace("$", "")  # $ 数值高亮标记, 游戏内渲染不显示
+    text = re.sub(r"\$[a-zA-Z](?=\d)", "", text)  # $d2 等变量标记 ($字母+数字)
+    text = text.replace("$", "").replace("#", "")  # $/# 数值高亮标记, 游戏内渲染不显示
     return " ".join(re.sub(r"<[^>]+>", "", text).split())
 
 
@@ -700,7 +728,38 @@ def _single_event_text(lookup, game, me, opp, ev):
         return (f"攻击：{name}{_fmt_stat(ev.get('atk_stat'))}"
                 f" → {_ev_target(lookup, game, me, opp, ev.get('tgt_ref')) or '未知目标'}{_fmt_stat(ev.get('tgt_stat'))}")
     if ev["type"] == "power":
-        return f"英雄技能 {_ev_name(lookup, game, eid, '未知技能')}"
+        name = _ev_name(lookup, game, eid, "未知技能")
+        body = f"英雄技能 {name}"
+        ent = game["entities"].get(eid)
+        desc = (HERO_POWER_DESC_BY_NAME.get(name) or HERO_POWER_TEXTS.get((ent.get("cardId") if ent else "") or "")
+                or _ev_desc(lookup, game, eid))
+        if desc.startswith("英雄技能"):  # 技能原文自带的引导词与行前缀重复
+            desc = desc[len("英雄技能"):].strip()
+        if desc:
+            body += f"<{desc}>"
+        return body
+    if ev["type"] == "heal":
+        ent = game["entities"].get(eid)
+        if ent and _ctype(ent) == "HERO":
+            name = "未知英雄"
+            if me and ent["controller"] == me["controller"]:
+                name = "我方英雄"
+            elif opp and ent["controller"] == opp["controller"]:
+                name = "对方英雄"
+        else:
+            name = _ev_name(lookup, game, eid, "未知目标")
+        hp = ev.get("hp")
+        return f"治疗：{name} 血{hp[0]}→{hp[1]}" if hp else f"治疗：{name}"
+    if ev["type"] == "armor":
+        ent = game["entities"].get(eid)
+        if ent and me and ent["controller"] == me["controller"]:
+            name = "我方英雄"
+        elif ent and opp and ent["controller"] == opp["controller"]:
+            name = "对方英雄"
+        else:
+            name = _ev_name(lookup, game, eid, "未知英雄")
+        gain = ev.get("gain")
+        return f"获得护甲 {name} +{gain}" if gain is not None else f"获得护甲 {name}"
     if ev["type"] == "summon":
         name = _ev_name(lookup, game, eid) or "未知随从"
         body = f"召唤 {name}{_fmt_stat(ev.get('stat'))}"

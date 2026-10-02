@@ -150,7 +150,8 @@ Validation errors are itemized line by line so an agent can fix the deck mechani
 [第 9 回合·对方] 获得 2 张牌
 [第 9 回合·对方] 打出 随从「抛石鱼人」 2/4<战吼：获取一张 法力值消耗为（1）的石头。石头可以造成3点伤害。>
 [第 10 回合·我方] 抽牌 时光领主埃博克<战吼：消灭你的对手上回合使用的 所有随从。>
-[第 10 回合·我方] 英雄技能 全副武装！
+[第 10 回合·我方] 获得护甲 我方英雄 +2
+[第 10 回合·我方] 英雄技能 全副武装！<获得2点护甲值。>
 # 实体总数 106 | 解析起始行 2 | 日志总行 8000
 ```
 
@@ -158,7 +159,7 @@ Validation errors are itemized line by line so an agent can fix the deck mechani
 
 > **`hs board` / `hs watch` are under active development**: the Hearthstone log format shifts with each patch, and coverage of complex in-game effects (transforms, tokens, bounce, ...) keeps expanding. If you hit a parse error or odd panel data, please open an [issue](https://github.com/OstrichHermit/hearthstone-cli/issues) or send a PR — all help welcome!
 
-`hs board` replays every packet from the last `CREATE_GAME` in the log and prints the final state panel, ready to be fed to an AI. Your side is auto-detected as the player whose hand is visible (only the local client sees its own hand); pin it with `--player=<name>` if unsure. `--stdin` reads the log from a pipe for testing. Each panel ends with an action recap that automatically covers the last three turns along turn boundaries — all of my previous turn, all of the opponent's last turn, and what has already happened on my current turn (`--events=N` to change how many turns, `--events=0` to hide it). Effect text (truncated to 48 chars) is attached where a card first enters view: on my draw events (opening deal and mulligan redraws are recorded as the "opening" turn), on the opponent's played cards, and on both sides' summons — so the AI can understand unfamiliar cards without a db lookup. Attack/death/play/summon events carry an at-the-moment ATK/HP snapshot (current HP already accounts for accumulated damage), so minion trades read at a glance. Opponent draws are reported as counts only, never card names. The mulligan-phase panel prints the opening deal the same way, ready for keep-or-mulligan advice.
+`hs board` replays every packet from the last `CREATE_GAME` in the log and prints the final state panel, ready to be fed to an AI. Your side is auto-detected as the player whose hand is visible (only the local client sees its own hand); pin it with `--player=<name>` if unsure. `--stdin` reads the log from a pipe for testing. Each panel ends with an action recap that automatically covers the last three turns along turn boundaries — all of my previous turn, all of the opponent's last turn, and what has already happened on my current turn (`--events=N` to change how many turns, `--events=0` to hide it). Effect text (truncated to 48 chars) is attached where a card first enters view: on my draw events (opening deal and mulligan redraws are recorded as the "opening" turn), on the opponent's played cards, on both sides' summons, and on hero-power lines — so the AI can understand unfamiliar cards without a db lookup. Attack/death/play/summon events carry an at-the-moment ATK/HP snapshot (current HP already accounts for accumulated damage), so minion trades read at a glance. Heal and armor-gain events get their own lines (hero heals and hero-power armor included). Opponent draws are reported as counts only, never card names. The mulligan-phase panel prints the opening deal the same way, ready for keep-or-mulligan advice.
 
 
 `hs watch start` runs a background daemon that tails Power.log; on the mulligan phase and on your turns it POSTs a fixed prompt to a self-hosted IM bridge (`POST /api/external/message`, Bearer-token auth), which then triggers AI advisor analysis in a Discord channel. Notes:
