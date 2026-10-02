@@ -656,7 +656,7 @@ def _hand_rows(lookup, game, controller):
         cost = _num(h["tags"].get("COST"))
         if cost is None:
             cost = c.get("cost") if c and c.get("cost") is not None else 0
-        ctype = TYPE_ZH.get(_ctype(h), _ctype(h) or "未知")
+        ctype = "任务" if _tag_int(h, "QUEST") == 1 else TYPE_ZH.get(_ctype(h), _ctype(h) or "未知")
         body = f"{_card_name(lookup, h["cardId"], h)} {cost}费"
         if _ctype(h) == "MINION":
             body += f" {_tag_int(h, 'ATK')}/{(_tag_int(h, 'HEALTH') or h['peak_hp']) - _tag_int(h, 'DAMAGE')}"
@@ -807,11 +807,15 @@ def _single_event_text(lookup, game, me, opp, ev):
     if ev["type"] == "death":
         return f"死亡：{_ev_name(lookup, game, eid, '未知卡牌')}{_fmt_stat(ev.get('stat'))}"
     if ev["type"] == "secret_play":
+        ent = game["entities"].get(eid)
+        kind = "任务" if ent and _tag_int(ent, "QUEST") == 1 else "奥秘"  # SECRET 区含奥秘与任务, QUEST tag 区分
         name = _ev_name(lookup, game, eid, "")
-        return f"打出 奥秘「{name}」" if name else "打出 奥秘"  # 对方奥秘 cardId 隐藏, 触发时才揭示
+        return f"打出 {kind}「{name}」" if name else f"打出 {kind}"  # 对方实体 cardId 隐藏, 触发时才揭示
     if ev["type"] == "secret_trigger":
-        name = _ev_name(lookup, game, eid, "未知奥秘")
-        body = f"奥秘触发 {name}"
+        ent = game["entities"].get(eid)
+        kind = "任务" if ent and _tag_int(ent, "QUEST") == 1 else "奥秘"
+        name = _ev_name(lookup, game, eid, f"未知{kind}")
+        body = f"{kind}{'完成' if kind == '任务' else '触发'} {name}"
         desc = _ev_desc(lookup, game, eid)
         if desc:
             body += f"<{desc}>"
