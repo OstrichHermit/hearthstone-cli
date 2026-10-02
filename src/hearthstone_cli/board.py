@@ -602,16 +602,13 @@ def _plain_text(html):
     return " ".join(re.sub(r"<[^>]+>", "", text).split())
 
 
-def _ev_desc(lookup, game, eid, limit=48, card_id=None):
-    """事件实体的卡牌效果描述 (去 HTML, 超长截断 48 字符加…); 查不到/无描述返回空;
-    card_id 显式传入时优先 (实体可能被任务链变形重建)"""
+def _ev_desc(lookup, game, eid, card_id=None):
+    """事件实体的卡牌效果描述 (去 HTML 全文, 不截断——每张牌全对局只挂一次, 长一点换来决策质量);
+    查不到/无描述返回空; card_id 显式传入时优先 (实体可能被任务链变形重建)"""
     ent = game["entities"].get(eid) if eid is not None else None
     cid = card_id or (ent["cardId"] if ent and ent["cardId"] else "")
     c = lookup.get(cid) if cid else None
-    text = _plain_text((c or {}).get("text") or "")
-    if not text:
-        return ""
-    return text[:limit] + ("…" if len(text) > limit else "")
+    return _plain_text((c or {}).get("text") or "")
 
 
 def _side_class(lookup, class_names, ent):
