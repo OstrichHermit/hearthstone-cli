@@ -41,7 +41,7 @@ cd hearthstone-cli
 pip install .
 ```
 
-For development use `pip install -e .` (edits take effect immediately). PyPI release: coming soon.
+For development use `pip install -e .` (edits take effect immediately). Also available from PyPI: `pip install hearthstone-cli`.
 
 Data lives by default in `~/.hearthstone-cli/` (card database, deck library, rendered images); override with the `HS_DECK_HOME` environment variable. Run `hs update` once after installing to fetch the card database.
 

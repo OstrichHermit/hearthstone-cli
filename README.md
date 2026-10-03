@@ -41,7 +41,7 @@ cd hearthstone-cli
 pip install .
 ```
 
-开发模式用 `pip install -e .`（改动源码即时生效）。PyPI 发布：Coming soon。
+开发模式用 `pip install -e .`（改动源码即时生效）。也可直接从 PyPI 安装：`pip install hearthstone-cli`。
 
 数据目录默认 `~/.hearthstone-cli/`（卡牌库、卡组库、卡组图都存这里），可用环境变量 `HS_DECK_HOME` 覆盖。装好后先跑一次 `hs update` 下载卡牌库。
 
