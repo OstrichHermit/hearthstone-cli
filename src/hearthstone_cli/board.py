@@ -5,7 +5,8 @@
   hs board --log=D:\\path\\Power.log  指定日志路径
   hs board --stdin                  从 stdin 读日志 (方便测试)
   hs board --player=鸵鸟居士         手动指定我方玩家名 (默认自动判定)
-  hs board --events=N               行动回顾带最近 N 个回合 (默认 3, N=0 完全不输出)
+  hs board --turns=N                行动回顾带最近 N 个回合 (默认 3, N=0 完全不输出)
+  hs board --debug                  末尾附解析调试行 (实体总数/日志行数)
 
 只认 GameState.DebugPrintPower() 行 (PowerTaskList 是重复历史, 忽略)。
 从最后一个 CREATE_GAME 起全量重放 packet, tag 原子覆盖, 输出最终状态面板;
@@ -822,10 +823,10 @@ def _src_label(lookup, game, ev):
         return "亡语"
     nm = _ev_name(lookup, game, sid, "") if sid is not None else ""
     if kind == "deathrattle":
-        return f"{nm}亡语" if nm else "亡语"
+        return f"{_cn(nm)}亡语" if nm else "亡语"
     if kind == "battlecry":
-        return f"{nm}战吼" if nm else "战吼"
-    return f"{nm}效果" if nm else None
+        return f"{_cn(nm)}战吼" if nm else "战吼"
+    return f"{_cn(nm)}效果" if nm else None
 
 
 def _reborn_backfill(game, dev, eid):
@@ -1413,8 +1414,8 @@ def _quest_lines(lookup, game, ctl):
         name = _card_name(lookup, q["cardId"], q)
         prog, total = _tag_int(q, "QUEST_PROGRESS"), _tag_int(q, "QUEST_PROGRESS_TOTAL")
         done = _tag_int(q, "QUEST_COMPLETED") == 1 or (total > 0 and prog >= total)
-        prog_txt = f" {prog}/{total}" if total else (f" {prog}" if prog else "")
-        rows.append(f"任务 {name}{prog_txt}（已完成）" if done else f"任务 {name}{prog_txt}")
+        prog_txt = f"{prog}/{total}" if total else (f"{prog}" if prog else "")
+        rows.append(f"任务{_cn(name)}{prog_txt}（已完成）" if done else f"任务{_cn(name)}{prog_txt}")
     return rows
 
 
@@ -1429,7 +1430,7 @@ def _quest_reward_hint(lookup, game, ev):
     if cands:
         nm = _ev_name(lookup, game, min(cands, key=lambda e: e["id"])["id"])
         if nm:
-            return f"（奖励 {nm} 已入手）"
+            return f"（奖励 {_cn(nm)} 已入手）"
         return "（奖励已入手）"
     evs = game["events"]
     idx = next((i for i, e in enumerate(evs) if e is ev), None)
@@ -1509,6 +1510,19 @@ def _card_name(lookup, card_id, ent=None):
     return card_id
 
 
+def _cn(name):
+    """卡名统一「」包裹 (防卡名自带标点与数值/分隔符粘连; 空名原样返回)"""
+    return f"「{name}」" if name else name
+
+
+def _j(a, b):
+    """两段拼接: 紧邻「」名字或前段以冒号结尾则无缝, 否则补空格 (称谓/普通词间保留空格); b 空返回 a"""
+    if not b:
+        return a
+    sep = "" if (a.endswith("」") or a.endswith("：") or b.startswith("「")) else " "
+    return f"{a}{sep}{b}"
+
+
 def _plain_text(html):
     """卡牌 HTML 描述 -> 纯文本 (去标签 + 取 @ 升级段第一段 + 占位符转X + 压缩空白)"""
     text = (html or "").replace("<b>@</b>", "X")  # 段内动态数值占位 (@ 包在标签里, 区别于段分隔符)
@@ -1580,10 +1594,16 @@ def _hero_line(lookup, game, controller):
     armor = _tag_int(hero, "ARMOR")
     weapon = next(iter(_of_side(game, controller, "PLAY", "WEAPON")), None)
     power = next(iter(_of_side(game, controller, "PLAY", "HERO_POWER")), None)
-    wname = _card_name(lookup, weapon["cardId"], weapon) if weapon else "无"
-    pname = _card_name(lookup, power["cardId"], power) if power else "无"
+    weapon_txt = ""
+    if weapon:
+        wdur = _tag_int(weapon, "DURABILITY")  # 剩余耐久口径同地标: 有 tag 用之, 缺失按血量-已伤推算
+        if not wdur:
+            wdur = max((_tag_int(weapon, "HEALTH") or weapon["peak_hp"]) - _tag_int(weapon, "DAMAGE"), 0)
+        weapon_txt = f" 武器 {_cn(_card_name(lookup, weapon['cardId'], weapon))}{_tag_int(weapon, 'ATK')}/{wdur}"
+    pname = _cn(_card_name(lookup, power["cardId"], power)) if power else "无"
     pstate = "已用" if power and _tag_int(power, "EXHAUSTED") == 1 else "未用"
-    return f"英雄：{_card_name(lookup, hero["cardId"], hero)} 血 {hp}/{max_hp} 护甲 {armor} 武器 {wname} 技能 {pname}({pstate})"
+    return (f"英雄：{_cn(_card_name(lookup, hero["cardId"], hero))}血 {hp}/{max_hp} 护甲 {armor}"
+            f"{weapon_txt} 技能{pname}({pstate})")
 
 
 def _minion_tags(ent, cur_turn=0):
@@ -1612,15 +1632,14 @@ def _board_rows(lookup, game, controller):
     ents = _of_side(game, controller, "PLAY", "MINION") + _of_side(game, controller, "PLAY", "LOCATION")
     ents.sort(key=lambda e: (e["zone_pos"], e["id"]))  # 地标占场面格子, 与随从按场上位置合并排序
     for i, m in enumerate(ents, 1):
-        gold = " [金]" if _tag_int(m, "PREMIUM") >= 1 else ""
         if _ctype(m) == "LOCATION":
             dur = _tag_int(m, "DURABILITY")  # 剩余耐久: 有 DURABILITY tag 用之, 否则按血量-已伤推算
             if not dur:
                 dur = max((_tag_int(m, "HEALTH") or m["peak_hp"]) - _tag_int(m, "DAMAGE"), 0)
-            rows.append(f"  {i}. {_card_name(lookup, m['cardId'], m)}{gold} [地标 耐久{dur}]")
+            rows.append(f"  {i}. {_cn(_card_name(lookup, m['cardId'], m))}[地标 耐久{dur}]")
             continue
         hp = (_tag_int(m, "HEALTH") or m["peak_hp"]) - _tag_int(m, "DAMAGE")
-        rows.append(f"  {i}. {_card_name(lookup, m["cardId"], m)} {_tag_int(m, 'ATK')}/{hp}{gold} {_minion_tags(m, cur_turn)}".rstrip())
+        rows.append(f"  {i}. {_cn(_card_name(lookup, m["cardId"], m))}{_tag_int(m, 'ATK')}/{hp} {_minion_tags(m, cur_turn)}".rstrip())
     return rows
 
 
@@ -1643,7 +1662,7 @@ def _hand_rows(lookup, game, controller):
         if cost is None:
             cost = c.get("cost") if c and c.get("cost") is not None else 0
         ctype = "任务" if _is_quest_ent(h) else TYPE_ZH.get(_ctype(h), _ctype(h) or "未知")
-        body = f"{_card_name(lookup, h["cardId"], h)} {cost}费"
+        body = f"{_cn(_card_name(lookup, h["cardId"], h))}{cost}费"
         if _ctype(h) == "MINION":
             body += f" {_tag_int(h, 'ATK')}/{(_tag_int(h, 'HEALTH') or h['peak_hp']) - _tag_int(h, 'DAMAGE')}"
         marks = ""
@@ -1651,11 +1670,9 @@ def _hand_rows(lookup, game, controller):
             marks += " [已强化]"  # 条件触发强化已生效 (如牌库达标减费)
         if _tag_int(h, "LITERALLY_UNPLAYABLE") == 1:
             marks += " [不可打出]"  # 当前条件不满足, 本回合无法使用
-        if _tag_int(h, "PREMIUM") >= 1:
-            marks += " [金]"
         forge = _forge_prev_name(lookup, game, h)
         if forge:
-            marks += f" <兆示：{forge}>"
+            marks += f" <兆示：{_cn(forge)}>"
         rows.append(f"  {i}. {body} {ctype}{marks}")
     return rows
 
@@ -1698,7 +1715,7 @@ def _ev_target(lookup, game, me, opp, ref):
             return "对方英雄"
         return _ev_name(lookup, game, eid) or "英雄"
     nm = _ev_name(lookup, game, eid, fallback=ref if ref[:1].isalpha() else "")
-    return nm or "未知目标"
+    return _cn(nm) or "未知目标"
 
 
 def _ev_side(game, me, opp, actor):
@@ -1714,8 +1731,8 @@ def _ev_side(game, me, opp, actor):
 
 
 def _fmt_stat(stat):
-    """攻血快照 -> " a/b" 后缀; 无快照返回空"""
-    return f" {stat[0]}/{stat[1]}" if stat else ""
+    """攻血快照 -> "a/b" 后缀 (紧邻「」名无缝, 不带前导空格); 无快照返回空"""
+    return f"{stat[0]}/{stat[1]}" if stat else ""
 
 
 def _power_desc(lookup, game, eid, name):
@@ -1729,7 +1746,7 @@ def _power_desc(lookup, game, eid, name):
 
 
 def _ent_disp_name(lookup, game, me, opp, eid):
-    """事件实体显示名: 英雄按阵营称 我方英雄/对方英雄, 其余查卡名"""
+    """事件实体显示名: 英雄按阵营称 我方英雄/对方英雄 (称谓不包「」), 其余查卡名并包「」"""
     ent = game["entities"].get(eid) if eid is not None else None
     if ent and _ctype(ent) == "HERO":
         if me and ent["controller"] == me["controller"]:
@@ -1737,21 +1754,15 @@ def _ent_disp_name(lookup, game, me, opp, eid):
         if opp and ent["controller"] == opp["controller"]:
             return "对方英雄"
         return _ev_name(lookup, game, eid) or "英雄"
-    return _ev_name(lookup, game, eid, "未知目标")
+    return _cn(_ev_name(lookup, game, eid, "未知目标"))
 
 
 def _heal_src_label(lookup, game, ev):
     """治疗来源描述: 英雄技能块=英雄技能 X, 触发/法术效果块=X效果; 判不出返回 None"""
     if ev.get("src_kind") == "heropower":
         nm = _ev_name(lookup, game, ev.get("src_id"), "") if ev.get("src_id") is not None else ""
-        return f"英雄技能 {nm}".rstrip()
+        return f"英雄技能{_cn(nm)}".rstrip()
     return _src_label(lookup, game, ev)
-
-
-def _gold_mark(lookup, game, eid):
-    """实体 PREMIUM>=1 (金/签名/钻石卡) -> [金] 标注"""
-    ent = game["entities"].get(eid) if eid is not None else None
-    return " [金]" if ent is not None and _tag_int(ent, "PREMIUM") >= 1 else ""
 
 
 def _single_event_text(lookup, game, me, opp, ev):
@@ -1760,15 +1771,16 @@ def _single_event_text(lookup, game, me, opp, ev):
         name = _ev_name(lookup, game, eid, "未知卡牌")
         ct = ev.get("ctype")
         if ct == "HERO":
-            return f"打出英雄牌 {name}"
-        body = f"打出 {TYPE_ZH.get(ct, ct or '卡牌')}「{name}」{_gold_mark(lookup, game, eid)}"
+            return f"打出英雄牌{_cn(name)}"
+        body = f"打出 {TYPE_ZH.get(ct, ct or '卡牌')}「{name}」"
         if ct == "MINION":
             body += _fmt_stat(ev.get("stat"))  # 打出时刻快照 (最终态可能已被 buff/打伤)
-        # 打出行稳定带卡牌关键词/描述 (抽牌时给过描述的是抽到的牌; 获得/召唤入手与库外来源的牌
-        # 从未展示过, 缺失会让决策线索不稳定——如 失控龙蛙 扰魔+嘲讽)
-        desc = _ev_desc(lookup, game, eid)
-        if desc:
-            body += f"<{desc}>"
+        # 描述挂"入手"一次: 我方牌在抽牌/获得/起手时已带, 打出不重复; 对方手牌不可见,
+        # 对方打出行是该牌唯一展示点, 必带 (失控龙蛙教训: 任何牌的描述至少出现一次)
+        if not (me and ev.get("actor") == me["controller"]):
+            desc = _ev_desc(lookup, game, eid)
+            if desc:
+                body += f"<{desc}>"
         # 块显式 Target = 打出指向 (法术/武器/战吼选定的目标, 随从战吼同样回填, 块内新建实体也可被指向);
         # 随从指向未揭示实体 (如对方从自己手牌选牌) 时目标名不可知, 不渲染"未知目标"噪音
         tref = ev.get("target_ref")
@@ -1787,7 +1799,7 @@ def _single_event_text(lookup, game, me, opp, ev):
             pent = game["entities"].get(ev["forge_pid"])
             cid = (pent["cardId"] if pent else "") or (pent.get("seen_cardid") if pent else "") or ""
             if cid:
-                body += f"（兆示 {_card_name(lookup, cid, pent)}）"
+                body += f"（兆示{_cn(_card_name(lookup, cid, pent))}）"
         return body
     if ev["type"] == "attack":
         ref = ev.get("atk_ref") or ""
@@ -1795,10 +1807,10 @@ def _single_event_text(lookup, game, me, opp, ev):
         name = _ev_name(lookup, game, atk_id, fallback=ref if ref[:1].isalpha() else "") or "未知随从"
         tgt = _ev_target(lookup, game, me, opp, ev.get("tgt_ref"))
         # Target=0/-1 = 引擎记录的取消/无目标攻击块, 只显示攻击方, 不编造"未知目标"
-        body = f"攻击：{name}{_fmt_stat(ev.get('atk_stat'))}"
+        body = f"攻击：{_cn(name)}{_fmt_stat(ev.get('atk_stat'))}"
         if not tgt:
             return body
-        body = f"{body} → {tgt}{_fmt_stat(ev.get('tgt_stat'))}"
+        body = f"{body} → {_j(tgt, _fmt_stat(ev.get('tgt_stat')))}"
         tid = _ref_id(ev.get("tgt_ref") or "")
         tent = game["entities"].get(tid) if tid is not None else None
         if tent is not None and _tag_int(tent, "DORMANT") >= 1:
@@ -1809,7 +1821,7 @@ def _single_event_text(lookup, game, me, opp, ev):
         return body
     if ev["type"] == "power":
         name = _ev_name(lookup, game, eid, "未知技能")
-        body = f"英雄技能 {name}"
+        body = f"英雄技能{_cn(name)}"
         armor = ev.get("armor")
         if armor:  # 技能自带的护甲变化内联 (如 全副武装！（+2 护甲）), 不再单发护甲事件
             return f"{body}（+{armor} 护甲）"
@@ -1819,7 +1831,7 @@ def _single_event_text(lookup, game, me, opp, ev):
         return body
     if ev["type"] == "power_change":
         name = _ev_name(lookup, game, eid, "未知技能")
-        body = f"技能变更 {name}"
+        body = f"技能变更{_cn(name)}"
         desc = _power_desc(lookup, game, eid, name)
         if desc:
             body += f"<{desc}>"
@@ -1828,13 +1840,14 @@ def _single_event_text(lookup, game, me, opp, ev):
         name = _ent_disp_name(lookup, game, me, opp, eid)
         hp = ev.get("hp")
         src = _heal_src_label(lookup, game, ev)
-        if src:
-            return f"{src} 治疗 {name} 血{hp[0]}→{hp[1]}" if hp else f"{src} 治疗 {name}"
-        return f"治疗：{name} 血{hp[0]}→{hp[1]}" if hp else f"治疗：{name}"
+        head = _j(src, "治疗 ") if src else "治疗："
+        if hp:
+            return _j(head, _j(name, f"血{hp[0]}→{hp[1]}"))
+        return _j(head, name)
     if ev["type"] == "aura_cb":
         name = _ent_disp_name(lookup, game, me, opp, eid)
         vals = ev.get("vals")
-        return f"光环移除：{name} 属性回调 {vals[0]}→{vals[1]}" if vals else f"光环移除：{name}"
+        return _j(_j(f"光环移除：{name}", "属性回调"), f"{vals[0]}→{vals[1]}") if vals else f"光环移除：{name}"
     if ev["type"] == "armor":
         ent = game["entities"].get(eid)
         if ent and me and ent["controller"] == me["controller"]:
@@ -1842,12 +1855,12 @@ def _single_event_text(lookup, game, me, opp, ev):
         elif ent and opp and ent["controller"] == opp["controller"]:
             name = "对方英雄"
         else:
-            name = _ev_name(lookup, game, eid, "未知英雄")
+            name = _cn(_ev_name(lookup, game, eid, "未知英雄"))
         gain = ev.get("gain")
-        return f"获得护甲 {name} +{gain}" if gain is not None else f"获得护甲 {name}"
+        return _j("获得护甲", _j(name, f"+{gain}")) if gain is not None else _j("获得护甲", name)
     if ev["type"] == "summon":
         name = _ev_name(lookup, game, eid) or "未知随从"
-        body = f"召唤 {name}{_gold_mark(lookup, game, eid)}{_fmt_stat(ev.get('stat'))}"
+        body = f"召唤{_cn(name)}{_fmt_stat(ev.get('stat'))}"
         n = ev.get("count") or 1
         if n > 1:
             body += f" ×{n}"  # 同回合同来源同名召唤合并 (食尸鬼潮防刷屏)
@@ -1860,17 +1873,17 @@ def _single_event_text(lookup, game, me, opp, ev):
                 body += f"<{desc}>"
         return body
     if ev["type"] == "bounce":
-        return f"回手 {_ev_name(lookup, game, eid, '未知卡牌')}"
+        return f"回手{_cn(_ev_name(lookup, game, eid, '未知卡牌'))}"
     if ev["type"] == "equip":
-        return f"装备武器 {_ev_name(lookup, game, eid) or '未知武器'}"
+        return f"装备武器{_cn(_ev_name(lookup, game, eid) or '未知武器')}"
     if ev["type"] == "death":
-        body = f"死亡：{_ev_name(lookup, game, eid, '未知卡牌')}{_fmt_stat(ev.get('stat'))}"
+        body = f"死亡：{_cn(_ev_name(lookup, game, eid, '未知卡牌'))}"  # 死亡体血量必归零, 攻血快照无决策价值不显示
         if ev.get("reborn"):
             rs = ev.get("reborn_stat")
             body += f"（复生，复活为 {rs[0]}/{rs[1]}）" if rs else "（复生）"
         return body
     if ev["type"] == "burn":
-        return f"手牌已满，烧掉 {_ev_name(lookup, game, eid, '未知卡牌')}"
+        return f"手牌已满，烧掉{_cn(_ev_name(lookup, game, eid, '未知卡牌'))}"
     if ev["type"] == "eff_damage":
         src = _src_label(lookup, game, ev) or "效果"
         tent = game["entities"].get(ev.get("tgt_id"))
@@ -1878,9 +1891,10 @@ def _single_event_text(lookup, game, me, opp, ev):
             tnm = ("我方英雄" if me and tent["controller"] == me["controller"]
                    else "对方英雄" if opp and tent["controller"] == opp["controller"] else "英雄")
         else:
-            tnm = _ev_name(lookup, game, ev.get("tgt_id"), "未知目标")
+            tnm = _cn(_ev_name(lookup, game, ev.get("tgt_id"), "未知目标"))
         amount = ev.get("amount")
-        body = f"{src} 对 {tnm} 造成 {amount if amount is not None else '?'} 点伤害"
+        body = _j(_j(_j(src, "对"), tnm), "造成")
+        body += f" {amount if amount is not None else '?'} 点伤害"
         if ev.get("lethal"):
             body += "（致命）"  # 目标当场血量归零 (斩杀链终点)
         return body
@@ -1889,7 +1903,9 @@ def _single_event_text(lookup, game, me, opp, ev):
         tail = f"（{src}获得）" if src else ""
         if opp and ev.get("actor") == opp["controller"]:
             return f"获得 1 张牌{tail}"  # 对方手牌内容匿名, 口径同抽牌
-        return f"获得 {_ev_name(lookup, game, eid, '未知卡牌')}{tail}"
+        name = _ev_name(lookup, game, eid, "未知卡牌")
+        desc = _ev_desc(lookup, game, eid)  # 获得是入手点, 描述挂一次
+        return f"获得{_cn(name)}" + (f"<{desc}>" if desc else "") + tail
     if ev["type"] == "secret_play":
         ent = game["entities"].get(eid)
         kind = "任务" if ent and _is_quest_ent(ent) else "奥秘"  # SECRET 区含奥秘与任务, QUEST/SIDEQUEST tag 区分
@@ -1899,7 +1915,7 @@ def _single_event_text(lookup, game, me, opp, ev):
         if not name:
             return f"打出 {kind}"  # 对方真奥秘匿名, 无名字也无描述
         body = f"打出 {kind}「{name}」"
-        if not (me and ev.get("actor") == me["controller"]):  # 我方打出不带描述(抽牌时给过), 对方任务公开可见故带
+        if not (me and ev.get("actor") == me["controller"]):  # 描述挂入手一次: 我方打出不带, 对方任务公开可见故带
             desc = _ev_desc(lookup, game, eid, card_id=ev.get("card_id"))
             if desc:
                 body += f"<{desc}>"
@@ -1908,7 +1924,7 @@ def _single_event_text(lookup, game, me, opp, ev):
         ent = game["entities"].get(eid)
         kind = "任务" if ent and _is_quest_ent(ent) else "奥秘"
         name = _ev_name(lookup, game, eid, f"未知{kind}")
-        body = f"{kind}{'完成' if kind == '任务' else '触发'} {name}"
+        body = f"{kind}{'完成' if kind == '任务' else '触发'}{_cn(name)}"
         desc = _ev_desc(lookup, game, eid)
         if desc:
             body += f"<{desc}>"
@@ -1925,18 +1941,18 @@ def _single_event_text(lookup, game, me, opp, ev):
                 by_ctl.setdefault(ent["controller"], []).append(eid)
         for ctl in sorted((c for c in by_ctl if c is not None), key=lambda c: (c != (me["controller"] if me else None), c)):
             eids = by_ctl[ctl]
-            nms = [nm for nm in (_ev_name(lookup, game, eid) for eid in eids) if nm]
+            nms = [_cn(nm) for nm in (_ev_name(lookup, game, eid) for eid in eids) if nm]
             tail = f"（{' ／ '.join(nms)}）" if len(nms) == len(eids) else ("（卡名未知）" if not nms else f"（{' ／ '.join(nms)} 等）")
             parts.append(f"复制 {len(eids)} 张洗入{_ev_side(game, me, opp, ctl)}牌库{tail}")
         pw = ev.get("power")
         if pw is not None:
-            parts.append(f"替换英雄技能为 {_ev_name(lookup, game, pw, '未知技能')}")
+            parts.append(f"替换英雄技能为{_cn(_ev_name(lookup, game, pw, '未知技能'))}")
         if not parts:
-            return f"{name} 触发"
-        return f"{name} 触发：{'，'.join(parts)}"
+            return f"{_cn(name)}触发"
+        return f"{_cn(name)}触发：{'，'.join(parts)}"
     if ev["type"] == "choose":
         eids = ev.get("eids") or []
-        nms = [nm for nm in (_ev_name(lookup, game, e) for e in eids) if nm]
+        nms = [_cn(nm) for nm in (_ev_name(lookup, game, e) for e in eids) if nm]
         if nms:
             return "选择：" + " ／ ".join(nms) + ("" if len(nms) == len(eids) else " 等")
         return f"选择 {len(eids)} 项"  # 选项全程未揭示 (对方发现), 只报动作
@@ -1947,14 +1963,15 @@ def _single_event_text(lookup, game, me, opp, ev):
         src = _src_label(lookup, game, ev)
         if src:
             body += f"（{src}）"
-        nms = [nm for nm in (_ev_name(lookup, game, e) for e in eids) if nm]
+        nms = [_cn(nm) for nm in (_ev_name(lookup, game, e) for e in eids) if nm]
         if nms:
             body += "：" + " ／ ".join(nms) + ("" if len(nms) == len(eids) else " 等")
         return body
     if ev["type"] == "reveal":
         name = _ev_name(lookup, game, eid, "未知卡牌")
         src = _src_label(lookup, game, ev) or "触发"
-        body = f"{src} 亮出 「{name}」"
+        desc = _ev_desc(lookup, game, eid)  # 亮出常是该牌唯一可见点 (亡语抽施法类), 描述带上
+        body = _j(_j(src, "亮出"), _cn(name) + (f"<{desc}>" if desc else ""))
         return body + ("（已施放）" if ev.get("cast") else "（仅亮出，未施放）")
     if ev["type"] == "fatigue":
         n = ev.get("count")
@@ -1965,10 +1982,10 @@ def _single_event_text(lookup, game, me, opp, ev):
         cut = _deck_cost_cut(lookup, game, eid)
         if ev.get("prepare"):
             # 行动方已在行前缀 [第 N 回合·我方/对方] 标明, 正文不重复
-            body = (f"花费 {spent} 费 给 手牌中的{name} 预备" if spent is not None
-                    else f"给 手牌中的{name} 预备")
+            body = (f"花费 {spent} 费 给 手牌中的{_cn(name)} 预备" if spent is not None
+                    else f"给 手牌中的{_cn(name)} 预备")
         else:
-            body = f"对 手牌中的{name} 发动手牌动作"
+            body = f"对 手牌中的{_cn(name)} 发动手牌动作"
             if ev.get("summary"):
                 body += f"（{ev['summary']}）"
         if cut:
@@ -1977,7 +1994,7 @@ def _single_event_text(lookup, game, me, opp, ev):
     if ev["type"] == "dormant":
         name = _ev_name(lookup, game, eid, "未知随从")
         src = _src_label(lookup, game, ev)
-        return f"{src} 将 {name} [休眠]" if src else f"{name} 进入休眠"
+        return _j(_j(src, "将"), f"{_cn(name)} [休眠]") if src else f"{_cn(name)}进入休眠"
     if ev["type"] == "awaken":
         return f"{_ev_name(lookup, game, eid, '未知随从')} 苏醒"
 
@@ -2007,20 +2024,27 @@ def _event_lines(lookup, game, me, opp):
                 elif len(items) == 1 and not unknown:
                     nm, eid_j = items[0]
                     desc = _ev_desc(lookup, game, eid_j)
-                    lines.append((t, actor, f"抽牌 {nm}<{desc}>" if desc else f"抽牌 {nm}"))
+                    lines.append((t, actor, f"抽牌{_cn(nm)}<{desc}>" if desc else f"抽牌{_cn(nm)}"))
                 else:
                     body = f"抽牌 {len(items) + unknown} 张"
                     if items:
                         parts = []
                         for nm, eid_j in items:
                             desc = _ev_desc(lookup, game, eid_j)
-                            parts.append(f"{nm}<{desc}>" if desc else nm)
+                            parts.append(f"{_cn(nm)}<{desc}>" if desc else _cn(nm))
                         body += f"（{' ／ '.join(parts)}）"
                     lines.append((t, actor, body))
             else:
                 verb = "弃牌" if et == "discard" else "获得"
-                for nm, _ in items:
-                    lines.append((t, actor, f"{verb}：{nm}" if et == "discard" else f"{verb} {nm}"))
+                for nm, eid_j in items:
+                    if et == "discard":
+                        lines.append((t, actor, f"{verb}：{_cn(nm)}"))
+                    elif opp_ctl is not None and actor == opp_ctl:
+                        # 对方获得: 名字在选择类事件里已公开, 描述留给打出行 (唯一必展示点)
+                        lines.append((t, actor, f"{verb}{_cn(nm)}"))
+                    else:  # 获得是入手点, 描述挂一次
+                        desc = _ev_desc(lookup, game, eid_j)
+                        lines.append((t, actor, f"{verb}{_cn(nm)}<{desc}>" if desc else f"{verb}{_cn(nm)}"))
                 if unknown:
                     lines.append((t, actor, f"{verb} {unknown} 张牌" if et == "gain" else f"{verb} {unknown} 张"))
             i = j
@@ -2042,8 +2066,19 @@ def _opening_lines(lookup, game, me, opp):
             nm = _ev_name(lookup, game, eid)
             if not nm:
                 return None
-            nms.append(nm)
+            nms.append(_cn(nm))
         return nms
+
+    def bits_of(eids):
+        """卡名+描述片段 (入手点挂一次描述): 起手/换入列表用; 任一卡名缺失返回 None"""
+        bits = []
+        for eid in eids:
+            nm = _ev_name(lookup, game, eid)
+            if not nm:
+                return None
+            desc = _ev_desc(lookup, game, eid)
+            bits.append(f"{_cn(nm)}<{desc}>" if desc else _cn(nm))
+        return bits
 
     for p, mine in ((me, True), (opp, False)):
         if not p:
@@ -2053,7 +2088,7 @@ def _opening_lines(lookup, game, me, opp):
         if not dealt:
             continue
         if mine:
-            nms = names_of(dealt)
+            nms = bits_of(dealt)  # 起手=首次入手, 描述挂一次 (换牌阶段留牌建议的素材)
             out.append(f"[开局·我方] 起手 {len(dealt)} 张" + (f"（{' ／ '.join(nms)}）" if nms else ""))
         kept_raw = op["kept"].get(ctl)
         if kept_raw is None:
@@ -2064,11 +2099,11 @@ def _opening_lines(lookup, game, me, opp):
             continue  # 全保留: 不输出换行
         if mine:
             out_n = names_of(out_e)
-            body = f"[开局·我方] 保留 {len(dealt) - len(out_e)} 张换掉 "
-            body += " ／ ".join(out_n) if out_n else f"{len(out_e)} 张"
+            body = f"[开局·我方] 保留 {len(dealt) - len(out_e)} 张换掉"
+            body += _j("", " ／ ".join(out_n)) if out_n else _j("", f"{len(out_e)} 张")
             if in_e:
-                in_n = names_of(in_e)
-                body += f"（换入 {' ／ '.join(in_n)}）" if in_n else f"（换入 {len(in_e)} 张）"
+                in_n = bits_of(in_e)  # 换入=新入手, 描述挂一次
+                body += f"（换入{' ／ '.join(in_n)}）" if in_n else f"（换入 {len(in_e)} 张）"
             out.append(body)
         else:
             out.append(f"[开局·对方] 保留 {len(dealt) - len(out_e)} 换 {len(out_e)} 张")
@@ -2081,12 +2116,12 @@ def _opening_lines(lookup, game, me, opp):
 
 def _events_section(lookup, game, me, opp, turns=3, mulligan=False):
     """行动回顾: 开局结构化行 (起手/换牌/幸运币) + 事件行 (开局触发等), 按回合边界自动带最近
-    turns 个回合 (我方上回合全部+对方上回合全部+我方本回合已发生), 不按条数截断"""
+    turns 个回合 (我方上回合全部+对方上回合全部+我方本回合已发生), 不按条数截断;
+    回合分节头只出现一次, 节内事件带 回合-序号 编号 (如 17-3) 方便引用"""
     lines = _event_lines(lookup, game, me, opp)
     out = ["=== 行动回顾 ==="]
-    rendered = [(0, s) for s in _opening_lines(lookup, game, me, opp)]
-    rendered += [(t, f"[{'开局' if t == 0 else f'第 {t} 回合'}·{_ev_side(game, me, opp, actor)}] {txt}")
-                 for t, actor, txt in lines]
+    rendered = [(0, None, s) for s in _opening_lines(lookup, game, me, opp)]
+    rendered += [(t, actor, txt) for t, actor, txt in lines]
     if not rendered:
         out.append("（暂无行动记录）")
         return out
@@ -2097,10 +2132,20 @@ def _events_section(lookup, game, me, opp, turns=3, mulligan=False):
     if not rendered:
         out.append("（近期无行动记录）")
         return out
-    out += [s for _, s in rendered]
+    last_key, seq = None, 0
+    for t, actor, txt in rendered:
+        if t == 0:  # 开局行自带 [开局·xx] 前缀且双方交错, 不并入回合分节
+            out.append(txt)
+            continue
+        key = (t, actor)
+        if key != last_key:
+            out.append(f"[第 {t} 回合·{_ev_side(game, me, opp, actor)}]")
+            last_key, seq = key, 0
+        seq += 1
+        out.append(f"{t}-{seq} {txt}")
     cur_actor = game["actor"]
     if cur_actor is not None and not mulligan and not any(t == cur_t and a == cur_actor for t, a, _ in lines):
-        out.append(f"[第 {cur_t} 回合·{_ev_side(game, me, opp, cur_actor)}] （尚未行动或无动作）")
+        out.append(f"[第 {cur_t} 回合·{_ev_side(game, me, opp, cur_actor)}]（尚未行动或无动作）")
     return out
 
 
@@ -2127,11 +2172,12 @@ def _mana_line(game, me, mulligan):
     return f"我的法力 {_mana_text(me, mulligan)}"
 
 
-def render_panel(game, start_line, total, lookup, class_names, player_arg=None, events_turns=3):
+def render_panel(game, start_line, total, lookup, class_names, player_arg=None, events_turns=3, debug=False):
     out = ["=== 炉石对局面板 ==="]
     if game is None or not game["entities"]:
         out.append("（尚未开始对局或日志为空）")
-        out.append(f"# 实体总数 0 | 解析起始行 {start_line} | 日志总行 {total}")
+        if debug:
+            out.append(f"# 实体总数 0 | 解析起始行 {start_line} | 日志总行 {total}")
         return "\n".join(out)
 
     players = _players(game)
@@ -2200,15 +2246,22 @@ def render_panel(game, start_line, total, lookup, class_names, player_arg=None, 
         deck = len(_in_zone(game, ctl, "DECK"))  # 直接统计 DECK 区实体数, 复制牌导致的超编也如实反映
         order_tag = order.get(p["id"], "")
         hand_n = len(_in_zone(game, ctl, "HAND"))
-        corpse_txt = f"尸体 {corpses} " if corpses > 0 else ""
-        stat = (f"手牌 {hand_n} " if label != "我方" else "") + f"奥秘 {secrets} 牌库 {deck} "
+        stat_bits = []
+        if label != "我方":
+            stat_bits.append(f"手牌 {hand_n}")  # 对方空手也是信息, 0 张照显
+        if secrets:
+            stat_bits.append(f"奥秘 {secrets}")
+        stat_bits.append(f"牌库 {deck}")
+        if corpses:
+            stat_bits.append(f"尸体 {corpses}")
+        if fatigue:
+            stat_bits.append(f"疲劳 {fatigue}")
         head_txt = f"{name}：{pname}（{cls}）" if label else f"{pname}（{cls}）"
         if order_tag:
             head_txt += f"{order_tag} "
         # 法力是公开信息: 对方 (及未知我方时的各方) 状态行补法力/过载段, 我方法力在面板头已有不重复
         mana_txt = "" if label == "我方" else f" 法力 {_mana_text(p, mulligan)}"
-        out.append(f"{head_txt}{stat}{corpse_txt}疲劳 {fatigue}{mana_txt}" if label
-                   else f"{head_txt}手牌 {hand_n} 奥秘 {secrets} 牌库 {deck} {corpse_txt}疲劳 {fatigue}{mana_txt}")
+        out.append(f"{head_txt}{' '.join(stat_bits)}{mana_txt}")
         out.append(_hero_line(lookup, game, ctl))
         out.extend(_quest_lines(lookup, game, ctl))
         if not mulligan:  # 换牌阶段双方场面输出为空
@@ -2223,12 +2276,13 @@ def render_panel(game, start_line, total, lookup, class_names, player_arg=None, 
     if events_turns:  # 行动回顾放在调试行前; 换牌阶段输出开局发牌供留牌建议
         out.extend(_events_section(lookup, game, me, opp, turns=events_turns, mulligan=mulligan))
 
-    out.append(f"# 实体总数 {len(game['entities'])} | 解析起始行 {start_line} | 日志总行 {total}")
+    if debug:
+        out.append(f"# 实体总数 {len(game['entities'])} | 解析起始行 {start_line} | 日志总行 {total}")
     return "\n".join(out)
 
 
 def cmd_board(args):
-    log_path, use_stdin, player, events_turns = None, False, None, 3
+    log_path, use_stdin, player, events_turns, debug = None, False, None, 3, False
     for a in args:
         if a.startswith("--"):
             k, _, v = a[2:].partition("=")
@@ -2238,15 +2292,17 @@ def cmd_board(args):
                 use_stdin = True
             elif k == "player":
                 player = v
-            elif k == "events":
+            elif k == "debug":
+                debug = True
+            elif k == "turns":
                 events_turns = _num(v)
                 if events_turns is None or events_turns < 0:
-                    sys.exit("--events 需要非负整数 (默认 3 = 最近 3 个回合, N=0 完全不输出行动回顾)")
+                    sys.exit("--turns 需要非负整数 (默认 3 = 最近 3 个回合, N=0 完全不输出行动回顾)")
             else:
                 sys.exit(f"未知选项: --{k}")
         else:
             sys.exit(f"board 不接受位置参数: {a}\n"
-                     "用法: board [--log=Power.log路径] [--stdin] [--player=玩家名] [--events=N]")
+                     "用法: board [--log=Power.log路径] [--stdin] [--player=玩家名] [--turns=N] [--debug]")
     if use_stdin:
         lines = sys.stdin.buffer.read().decode("utf-8", "replace").splitlines()
     else:
@@ -2262,6 +2318,6 @@ def cmd_board(args):
     for cid, c in load_full_db().items():
         # 全量库兜底 (英雄技能/token 等非 collectible): collectible 已有的条目不覆盖, 查卡顺序优先原库
         lookup.setdefault(cid, c)
-    print(render_panel(game, start_line, total, lookup, CLASS_NAMES, player, events_turns=events_turns))
+    print(render_panel(game, start_line, total, lookup, CLASS_NAMES, player, events_turns=events_turns, debug=debug))
 
 
