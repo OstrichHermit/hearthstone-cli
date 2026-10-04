@@ -1,12 +1,13 @@
 """hs watch — 军师监听守护进程: tail Power.log, 回合/换牌触发时 POST 提示词到 IM 桥接器
 
 用法:
-  hs watch start [--channel=ID] [--url=URL] [--token=TOKEN] [--log=Power.log路径]
-                 [--mulligan-prompt=文本] [--turn-prompt=文本] [--config=配置路径] [--force]
+  hs watch start [--config=配置路径] [--force]
   hs watch stop   [--config=路径]
   hs watch status [--config=路径] [--events=N]
 
-配置存 ~/.hearthstone-cli/watch_config.json (merge 语义, 不带参沿用上次配置);
+所有配置统一在 ~/.hearthstone-cli/config.json 的 watch 节
+(channel_id/url/token/log/mulligan_prompt/turn_prompt), CLI 不提供配置参数,
+编辑文件后 start 生效; --config= 可指定其他配置路径。
 watch.log / watch.pid 与配置文件同目录 (便于 --config 测试隔离)。
 worker 本体: `python -m hearthstone_cli.watch_worker --config=...`, 标准库 only。
 """
@@ -19,14 +20,13 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from hearthstone_cli import board
+from hearthstone_cli import board, config
 
 DEFAULT_URL = "http://127.0.0.1:8088"
 DEFAULT_CHANNEL = "1477362651859255326"
 DEFAULT_TOKEN_ENV = "HS_WATCH_TOKEN"
 DEFAULT_MULLIGAN_PROMPT = "换牌阶段开始了，手牌已经亮出来了，帮我看看怎么留牌"
 DEFAULT_TURN_PROMPT = "轮到我的回合了，看看局面给我出个主意"
-DEFAULT_CONFIG = Path.home() / ".hearthstone-cli" / "watch_config.json"
 POST_SOURCE = "hs-watch"
 POST_RETRIES = 3
 POST_RETRY_WAIT = 2
@@ -34,36 +34,18 @@ BRIDGE_PATH = "/api/external/message"
 # 触发词: 行内出现即唤醒解析 (轻量预筛, 真正判定靠 board.parse_power_log 全量重放)
 TRIGGERS = ("CURRENT_PLAYER", "MULLIGAN_STATE")
 
-USAGE = """用法: hs watch start [--channel=ID] [--url=URL] [--token=TOKEN] [--log=路径]
-                     [--mulligan-prompt=文本] [--turn-prompt=文本] [--config=路径] [--force]
+USAGE = """用法: hs watch start [--config=路径] [--force]
       hs watch stop   [--config=路径]
       hs watch status [--config=路径] [--events=N]
 
+配置: 编辑 ~/.hearthstone-cli/config.json 的 watch 节
+      (channel_id/url/token/log/mulligan_prompt/turn_prompt), 编辑后 start 生效。
 --log 支持三种: "auto"(默认, 自动发现最新 Hearthstone_*/Power.log)、日志目录、具体 Power.log 文件路径。
 监听炉石 Power.log, 检测到换牌阶段/轮到我方回合时向 IM 桥接器 POST 提示词触发军师分析。
-配置 merge 保存于 ~/.hearthstone-cli/watch_config.json; 同目录生成 watch.log(运行日志) 与 watch.pid。"""
+token 也可用环境变量 HS_WATCH_TOKEN; 同目录生成 watch.log(运行日志) 与 watch.pid。"""
 
 
 # ---------- 配置 / PID ----------
-
-def _cfg_path(argv):
-    for a in argv:
-        if a.startswith("--config="):
-            return Path(a.split("=", 1)[1]).expanduser()
-    return DEFAULT_CONFIG
-
-
-def _load_json(p):
-    try:
-        return json.loads(p.read_text("utf-8"))
-    except Exception:
-        return {}
-
-
-def _save_json(p, data):
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
-
 
 def _read_pid(p):
     try:
@@ -192,7 +174,7 @@ def _handle(ctx):
     content = ctx["mulligan_prompt"] if kind == "mulligan" else ctx["turn_prompt"]
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     if not ctx["token"]:
-        ctx["log"]("ERROR", f"{ts} kind={kind} key={key} -> token 为空, 无法 POST (start --token= 或环境变量 {DEFAULT_TOKEN_ENV})")
+        ctx["log"]("ERROR", f"{ts} kind={kind} key={key} -> token 为空, 无法 POST (配置文件 watch 节 token 或环境变量 {DEFAULT_TOKEN_ENV})")
         return
     ok, detail = post_retry(ctx["url"], ctx["token"], ctx["channel_id"], content, ctx["log"])
     if ok:
@@ -272,8 +254,8 @@ def tail_loop(power_path, ctx):
 
 def worker_main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
-    cfg_path = _cfg_path(argv)
-    cfg = _load_json(cfg_path)
+    cfg_path = config.path_for(argv)
+    cfg = config.load(cfg_path, "watch")
     log_path = cfg_path.parent / "watch.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     logfh = open(log_path, "a", encoding="utf-8")
@@ -365,25 +347,12 @@ def _print_summary(cfg, pid, cfg_path):
 
 
 def _watch_start(argv):
-    o = _parse_opts(argv, {"config", "channel", "url", "token", "log", "mulligan-prompt", "turn-prompt"}, {"force"})
-    cfg_path = Path(o["config"]).expanduser() if "config" in o else DEFAULT_CONFIG
+    o = _parse_opts(argv, {"config"}, {"force"})
+    cfg_path = config.path_for(argv)
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg = _load_json(cfg_path)
-    if "channel" in o:
-        cfg["channel_id"] = o["channel"]
-    if "url" in o:
-        cfg["url"] = o["url"]
-    if "token" in o:
-        cfg["token"] = o["token"]
-    if "log" in o:
-        cfg["log"] = o["log"]
-    if "mulligan-prompt" in o:
-        cfg["mulligan_prompt"] = o["mulligan-prompt"]
-    if "turn-prompt" in o:
-        cfg["turn_prompt"] = o["turn-prompt"]
-    if not cfg.get("log"):
-        cfg["log"] = "auto"  # 自动发现: E:\Hearthstone\Logs(Hearthstone_* 子目录) 及标准目录
-    _save_json(cfg_path, cfg)
+    cfg = config.load(cfg_path, "watch")
+    # 配置文件是用户的地盘, start 不写回; log 缺省只在内存兜底 (自动发现最新日志), 供展示与传参
+    cfg.setdefault("log", "auto")
 
     pid_path = cfg_path.parent / "watch.pid"
     pid = _read_pid(pid_path)
@@ -412,12 +381,12 @@ def _watch_start(argv):
     print("军师监听已启动" if running else "军师监听启动异常")
     _print_summary(cfg, proc.pid, cfg_path)
     if not (cfg.get("token") or os.environ.get(DEFAULT_TOKEN_ENV)):
-        print(f"提示: token 为空, 检测可用但不会 POST (start --token=xxx 或环境变量 {DEFAULT_TOKEN_ENV})")
+        print(f"提示: token 为空, 检测可用但不会 POST (在配置文件 watch 节填 token 或设环境变量 {DEFAULT_TOKEN_ENV})")
 
 
 def _watch_stop(argv):
     o = _parse_opts(argv, {"config"}, set())
-    cfg_path = Path(o["config"]).expanduser() if "config" in o else DEFAULT_CONFIG
+    cfg_path = config.path_for(argv)
     pid_path = cfg_path.parent / "watch.pid"
     pid = _read_pid(pid_path)
     if pid and pid_alive(pid):
@@ -440,8 +409,8 @@ def _tail_events(log_path, n):
 
 def _watch_status(argv):
     o = _parse_opts(argv, {"config", "events"}, set())
-    cfg_path = Path(o["config"]).expanduser() if "config" in o else DEFAULT_CONFIG
-    cfg = _load_json(cfg_path)
+    cfg_path = config.path_for(argv)
+    cfg = config.load(cfg_path, "watch")
     pid_path = cfg_path.parent / "watch.pid"
     pid = _read_pid(pid_path)
     if pid and pid_alive(pid):

@@ -1,0 +1,14 @@
+{
+  "watch": {
+    "channel_id": "",
+    "url": "http://127.0.0.1:8088",
+    "token": "",
+    "log": "auto",
+    "mulligan_prompt": "换牌阶段开始了，手牌已经亮出来了，帮我看看怎么留牌",
+    "turn_prompt": "轮到我的回合了，看看局面给我出个主意"
+  },
+  "collection": {
+    "interval": 5,
+    "sync_delete": false
+  }
+}

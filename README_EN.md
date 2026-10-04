@@ -22,6 +22,7 @@ Human deck builders are GUI simulators: drag cards, watch the mana curve. An age
 - **Game board** — full replay of the Hearthstone client log Power.log into a structured live panel: game mode, turn/action tracking, both sides' mana (incl. Overload locks) and turn order (coin marked), both heroes' HP/armor/weapon/power (incl. imbue/transform changes), board minions and locations with status tags (taunt, divine shield, windfury, frozen, dormant, ...), your hand with cost/atk/hp (Forge preview, powered-up / unplayable tags), both players' deck count / fatigue / corpses, quest progress (shown separately from secrets), and an endgame line (win/loss via lethal, concede, or fatigue)
 - **Action replay** — a per-turn event stream covering every step of both players: plays (yours bare-named, opponent plays with effect text; battlecry targets for both), attacks (target + actual damage), hero powers, draw/discard, mulligan keeps/swaps, start-of-game triggers (legendary copies listed by name), deathrattle/trigger settlements (sourced summons, fatal damage tags, reborns, sourced heals), discover/cataclysm choices, prepare discounts, dormancy, deathrattle reveals (cast vs. revealed only), end-of-turn gains (with source), burned cards (named) — duplicates merged to avoid spam; the AI needs no card-db lookup
 - **Advisor watcher** — `hs watch` tails Power.log in the background; on the mulligan phase and your turns it pushes a fixed prompt to a self-hosted IM bridge, triggering AI advisor analysis
+- **Collection sync** (Windows only) — `hs collection` reads your saved deck lists straight from the running game's memory, encodes them into standard deck codes, and syncs them into the local deck library (`export` for a one-shot pull, `watch` for a background daemon that syncs on change)
 - **Agent-friendly** — plain-JSON input, itemized error output for precise self-correction, zero interactive prompts
 - **Local card database** — zhCN + enUS data from [HearthstoneJSON](https://hearthstonejson.com/), refreshed with one command on patch day
 
@@ -92,7 +93,8 @@ hs board --log=D:\games\Hearthstone\Logs\Power.log   # explicit log path (a dir 
 hs board --player=鸵鸟居士                            # pin your player name if auto-detect is unsure
 
 # Advisor watcher: POST a prompt to the IM bridge on mulligan / your turns to trigger AI analysis
-hs watch start --channel=<Discord channel ID> --token=<bridge token>   # --log=auto by default
+# Edit the watch section of ~/.hearthstone-cli/config.json first (channel_id/url/token, ...), then start
+hs watch start                                       # after filling the watch section in config.json
 hs watch status                                      # running state + recent trigger events
 hs watch stop
 ```
@@ -185,8 +187,68 @@ Validation errors are itemized line by line so an agent can fix the deck mechani
 `hs watch start` runs a background daemon that tails Power.log; on the mulligan phase and on your turns it POSTs a fixed prompt to a self-hosted IM bridge (`POST /api/external/message`, Bearer-token auth), which then triggers AI advisor analysis in a Discord channel. Notes:
 
 - **The bridge is a private component, not part of this repo** (default `http://127.0.0.1:8088`). On its own, `hs watch` only listens — it never sends anything without a reachable bridge. A failed POST is retried 3 times, then watching continues; recent triggers are visible via `hs watch status --events=N`
-- Config is merged into `~/.hearthstone-cli/watch_config.json`; a later `start` with no flags reuses the last config, and `--force` restarts over a stale process
-- Prompts are customizable via `--mulligan-prompt=` / `--turn-prompt=`; the token can also come from the `HS_WATCH_TOKEN` environment variable
+- All configuration lives in the `watch` section of `~/.hearthstone-cli/config.json` (`channel_id`/`url`/`token`/`log`/`mulligan_prompt`/`turn_prompt`), one shared config file for both `hs watch` and `hs collection`, managed per section; the CLI offers no configuration flags — edit the file, then `start`. `--force` restarts over a stale process
+- Prompts and the token are set in the config file; the token can also come from the `HS_WATCH_TOKEN` environment variable
+
+## Collection sync (optional, Windows only)
+
+`hs collection` uses a small built-in memory reader (DeckExport) to read your saved deck lists straight from the running Hearthstone client — the same approach as community tools like Hearthstone Deck Tracker: **read-only memory, nothing is ever written to the game**. Standard/Wild decks are encoded into standard deck codes and written into the deck library in the same format as `hs save`, so `hs show` / `hs image` / `hs check` work on them right away.
+
+Prerequisites:
+
+- Windows, with the Hearthstone client running
+- dotnet SDK 9 (`winget install Microsoft.DotNet.SDK.9`) — only needed to build the reader
+- A patched HearthMirror source cache (`~/.hearthstone-cli/native/src/`; upstream HearthMirror_Decompiled source does not compile as-is — fix the compile errors yourself or copy the cache from another machine with this tool set up)
+
+Common commands:
+
+```bash
+# One-shot export (auto-builds the reader on first run if missing)
+hs collection export
+
+# Compare only, write nothing (for debugging)
+hs collection export --check
+
+# Background daemon: syncs automatically whenever decks change in game (polls every 5s by default)
+# Edit the collection section of ~/.hearthstone-cli/config.json first (interval / sync_delete), then start
+hs collection watch start
+hs collection watch status                              # running state + recent sync events
+hs collection watch stop
+
+# Restart with --force after editing the config so a running daemon picks it up
+hs collection watch start --force
+
+# Build / repair the memory reader manually
+hs collection build
+```
+
+Notes:
+
+- Sync is additive by default: decks deleted in game are kept locally; set `sync_delete` to `true` in the config to mirror deletions — but only archives previously written by the sync itself are removed, anything imported manually via `hs save` is never touched
+- Duplicate deck names (the game allows multiple slots with the same name) get a `-<last 4 digits of deckId>` suffix from the second one on; naming is stable and reproducible
+- Non-Standard/Wild formats (Classic, Arena, ...) are skipped and listed
+- With the game closed, `export` exits with a friendly hint; `watch` idles silently and resumes once the game starts
+- A deck containing cards unknown to the local database is skipped as a whole — run `hs update` and sync again
+- `~/.hearthstone-cli/config.json` is the single entry point for configuration — one file, one section per feature (`watch` / `collection`, never interfering); the CLI no longer takes configuration flags (only the operational `--force` / `--check` / `--events=N` and the path locator `--config=路径`, which points at an alternative location; watch.pid / watch.log / collection.pid / collection.log live next to the config file for easy test isolation). Copy `config.example.json` from the repo root to get started. Full structure:
+
+```json
+{
+  "watch": {
+    "channel_id": "<Discord channel ID>",
+    "url": "http://127.0.0.1:8088",
+    "token": "<IM bridge token>",
+    "log": "auto",
+    "mulligan_prompt": "mulligan-phase prompt",
+    "turn_prompt": "my-turn prompt"
+  },
+  "collection": {
+    "interval": 5,
+    "sync_delete": false
+  }
+}
+```
+
+- The legacy `watch_config.json` / `collection_config.json` files are migrated into the matching section of the unified file on first use (legacy files are kept)
 
 ## Standard pool maintenance
 

@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <AssemblyName>DeckExport</AssemblyName>
+    <RootNamespace>DeckExport</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- No console window flashing / no Windows error dialogs on crash -->
+    <NoWin32Manifest>true</NoWin32Manifest>
+  </PropertyGroup>
+
+  <!--
+    Locate HearthMirror.dll.
+    Override precedence: -p:HearthMirrorDll=... > env HS_MIRROR_DLL > default below.
+    Default is the canonical deployed location (same dir as this tool's publish output),
+    which the automated bootstrap fills before building this project.
+  -->
+  <PropertyGroup>
+    <HearthMirrorDll Condition="'$(HearthMirrorDll)' == '' and '$(HS_MIRROR_DLL)' != ''">$(HS_MIRROR_DLL)</HearthMirrorDll>
+    <HearthMirrorDll Condition="'$(HearthMirrorDll)' == ''">$(USERPROFILE)\.hearthstone-cli\native\bin\HearthMirror.dll</HearthMirrorDll>
+    <ScryDll Condition="'$(ScryDll)' == ''">$(USERPROFILE)\.hearthstone-cli\native\lib\untapped-scry-dotnet.dll</ScryDll>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="HearthMirror">
+      <HintPath>$(HearthMirrorDll)</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <!-- Transitive runtime dependency of HearthMirror; referenced explicitly so
+         publish copies it into the output directory. -->
+    <Reference Include="untapped-scry-dotnet">
+      <HintPath>$(ScryDll)</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <!-- Transitive runtime dependency of HearthMirror (IPC serialization). -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+</Project>
