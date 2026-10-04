@@ -1602,7 +1602,7 @@ def _hero_line(lookup, game, controller):
         weapon_txt = f" 武器 {_cn(_card_name(lookup, weapon['cardId'], weapon))}{_tag_int(weapon, 'ATK')}/{wdur}"
     pname = _cn(_card_name(lookup, power["cardId"], power)) if power else "无"
     pstate = "已用" if power and _tag_int(power, "EXHAUSTED") == 1 else "未用"
-    return (f"英雄：{_cn(_card_name(lookup, hero["cardId"], hero))}血 {hp}/{max_hp} 护甲 {armor}"
+    return (f"英雄：{_cn(_card_name(lookup, hero["cardId"], hero))}血量 {hp}/{max_hp} 护甲 {armor}"
             f"{weapon_txt} 技能{pname}({pstate})")
 
 
@@ -1636,10 +1636,10 @@ def _board_rows(lookup, game, controller):
             dur = _tag_int(m, "DURABILITY")  # 剩余耐久: 有 DURABILITY tag 用之, 否则按血量-已伤推算
             if not dur:
                 dur = max((_tag_int(m, "HEALTH") or m["peak_hp"]) - _tag_int(m, "DAMAGE"), 0)
-            rows.append(f"  {i}. {_cn(_card_name(lookup, m['cardId'], m))}[地标 耐久{dur}]")
+            rows.append(f"  {i}.{_cn(_card_name(lookup, m['cardId'], m))}[地标 耐久{dur}]")
             continue
         hp = (_tag_int(m, "HEALTH") or m["peak_hp"]) - _tag_int(m, "DAMAGE")
-        rows.append(f"  {i}. {_cn(_card_name(lookup, m["cardId"], m))}{_tag_int(m, 'ATK')}/{hp} {_minion_tags(m, cur_turn)}".rstrip())
+        rows.append(f"  {i}.{_cn(_card_name(lookup, m["cardId"], m))}{_tag_int(m, 'ATK')}/{hp} {_minion_tags(m, cur_turn)}".rstrip())
     return rows
 
 
@@ -1673,7 +1673,7 @@ def _hand_rows(lookup, game, controller):
         forge = _forge_prev_name(lookup, game, h)
         if forge:
             marks += f" <兆示：{_cn(forge)}>"
-        rows.append(f"  {i}. {body} {ctype}{marks}")
+        rows.append(f"  {i}.{body} {ctype}{marks}")
     return rows
 
 
