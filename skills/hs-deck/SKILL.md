@@ -66,7 +66,7 @@ hs watch start/stop/status             # 军师监听：换牌/我方回合时 P
 - `hs board` 解析炉石客户端日志 Power.log（默认自动发现最新日志：游戏目录 `Logs\Hearthstone_*\Power.log` 与 `%LOCALAPPDATA%` 标准目录都扫，可 `--log=` 指定文件或目录，或 `--stdin` 管道读），从最后一个 CREATE_GAME 全量重放，输出结构化面板：回合/法力、双方英雄血甲、场面随从带状态标签、我方手牌费用攻血、对手手牌数与双方疲劳；我方按"手牌可见方"自动判定，不准时 `--player=玩家名` 手动指定；输出末尾附行动回顾，按回合边界自动带最近三个回合（我方上回合全部+对方上回合全部+我方本回合已发生，`--turns=N` 调整回合数，`--turns=0` 关闭）；效果描述（全量不截断）按"入手一次"挂载：我方随抽牌/获得/起手发牌/换入给出（我方打出不重复），对方手牌不可见、随打出的牌给出（唯一展示点），召唤无来源时与英雄技能行都附，攻击/死亡/打出/召唤事件附事件时刻攻血快照（当前血已扣受伤累积），治疗与获得护甲单独成行（英雄回血/上甲都算，技能加甲也是），技能被替换/升级（灌注/英雄牌/形态切换）输出"技能变更"事件附新技能描述，奥秘与任务（同挂 SECRET 区，QUEST tag 区分）打出/触发成事件（我方打出带卡名，对方匿名、触发时揭示附描述，任务完成单独措辞，面板双方行显示在场奥秘数含任务，手牌区任务显示"任务"类型），疲劳单独成行（第 N 次=英雄扣 N 血），对方抽牌只报张数不报卡名；换牌阶段面板同样输出开局发牌，可直接给留牌建议
 - `hs watch start/stop/status`：后台守护进程 tail Power.log，检测到换牌阶段或轮到我方回合时，向自建 IM 桥接器 `POST /api/external/message` 注入固定提示词，触发 Discord 军师频道 AI 分析（工作原理一句话：检测回合 → POST 提示词 → 桥接器触发 AI）
 - 桥接器是私有组件（默认 `http://127.0.0.1:8088`，Bearer token 鉴权），不在本仓库；`hs watch` 单独使用只监听不发送，POST 失败重试 3 次后继续监听
-- 配置 merge 存 `~/.hearthstone-cli/watch_config.json`，不带参 `start` 沿用上次配置；`--force` 强制重启；`status --events=N` 看最近触发；提示词用 `--mulligan-prompt=` / `--turn-prompt=` 自定义
+- 配置唯一入口是 `~/.hearthstone-cli/config.json` 的 `watch` 节（channel_id/url/token/log/mulligan_prompt/turn_prompt，与 `hs collection` 共用同一文件按节管理），CLI 无配置参数，编辑文件后 `start` 生效（`--config=` 可换路径，旧配置文件自动迁移）；`--force` 强制重启；`status --events=N` 看最近触发
 
 ## 标准池维护（补丁日例行）
 

@@ -22,6 +22,7 @@ A command-line toolbox for Hearthstone designed for AI agents, with two cores: d
 - **对局面板** — 解析炉石客户端日志 Power.log 全量重放，输出结构化实时面板：对局模式、总手数/回合/当前行动方、双方法力（含过载锁定）与先后手（后手标注硬币）、双方英雄血甲武器技能（含灌注/变形后的技能变更）、场面随从与地标（嘲讽/圣盾/风怒/冻结/休眠等状态标注）、我方手牌费用攻血（含兆示预览与已强化/不可打出标注）、双方牌库剩余/疲劳/尸体数、任务进度（与奥秘分流显示）、终局胜负与结束方式（斩杀/投降/疲劳）
 - **战况回放** — 行动回顾事件流按回合重放双方每一步：出牌（我方裸名、对方附效果描述，战吼目标都有）、攻击（附目标与实际伤害）、英雄技能、抽弃牌、换牌保留替换、开局触发效果（如复制传说洗入牌库列全卡名）、亡语与触发结算（召唤带来源、伤害标致命、复生、治疗带来源）、发现/灾变类选择、预备减费、休眠囚禁与苏醒、亡语亮牌（区分已施放/仅亮出）、回合结束获得（带来源与效果描述）、手牌满烧牌（报卡名），同名合并防刷屏；AI 无需查库即可理解新卡
 - **军师监听** — `hs watch` 后台监听 Power.log，换牌阶段和轮到我方回合时向自建 IM 桥接器推送固定提示词，触发 AI 军师分析对局
+- **卡组收藏同步**（仅 Windows）— `hs collection` 从运行中的游戏内存读取收藏卡组，自动编码为卡组代码并同步到本地卡组库存档（export 手动导出 / watch 常驻监听自动同步）
 - **对 Agent 友好** — 纯 JSON 输入、报错逐条列出便于自我修正、无任何交互式提示
 - **本地双语卡牌库** — 中英双语卡牌数据源自 [HearthstoneJSON](https://hearthstonejson.com/)，补丁日一条命令刷新
 
@@ -92,7 +93,8 @@ hs board --log=D:\games\Hearthstone\Logs\Power.log   # 指定日志路径（也�
 hs board --player=鸵鸟居士                            # 自动判定我方不准时手动指定
 
 # 军师监听：换牌阶段/轮到我方回合时，向 IM 桥接器 POST 提示词触发 AI 分析
-hs watch start --channel=<Discord频道ID> --token=<桥接器token>   # 默认 --log=auto 自动发现
+# 先编辑 ~/.hearthstone-cli/config.json 配好 watch 节（channel_id/url/token 等），再启动
+hs watch start                                       # 配置好 config.json 的 watch 节后启动
 hs watch status                                      # 查看运行状态与最近触发事件
 hs watch stop
 ```
@@ -183,12 +185,69 @@ hs watch stop
 
 `hs watch start` 启动一个后台守护进程 tail Power.log，检测到换牌阶段或轮到我方回合时，向自建 IM 桥接器 `POST /api/external/message`（Bearer token 鉴权）注入固定提示词，由桥接器触发 Discord 军师频道的 AI 分析。说明：
 
-
-`hs watch start` 启动一个后台守护进程 tail Power.log，检测到换牌阶段或轮到我方回合时，向自建 IM 桥接器 `POST /api/external/message`（Bearer token 鉴权）注入固定提示词，由桥接器触发 Discord 军师频道的 AI 分析。说明：
-
 - **桥接器是私有组件，不在本仓库内**（默认 `http://127.0.0.1:8088`）。不配置或连不上桥接器时，`hs watch` 单独使用只监听不发送——POST 失败自动重试 3 次后继续监听，不会崩溃，触发事件可用 `hs watch status --events=N` 查看
-- 配置 merge 存于 `~/.hearthstone-cli/watch_config.json`，再次 `start` 不带参数沿用上次配置；`--force` 可在残留进程时强制重启
-- 提示词可用 `--mulligan-prompt=` / `--turn-prompt=` 自定义，token 也可用环境变量 `HS_WATCH_TOKEN` 传入
+- 配置统一在 `~/.hearthstone-cli/config.json` 的 `watch` 节（`channel_id`/`url`/`token`/`log`/`mulligan_prompt`/`turn_prompt`），与 `hs collection` 共用同一个配置文件、按节管理；CLI 不提供配置参数，编辑文件后 `start` 生效；`--force` 可在残留进程时强制重启
+- 提示词与 token 都在配置文件里改，token 也可用环境变量 `HS_WATCH_TOKEN` 传入
+
+## 卡组收藏同步（可选，仅 Windows）
+
+`hs collection` 通过一个内置的小型内存读取器（DeckExport）直接从运行中的炉石客户端读取收藏卡组，机制与 Hearthstone Deck Tracker 等社区工具同款：**只读游戏内存，不写入游戏进程**。读到的 standard/wild 卡组会自动编码为标准卡组代码，按 `hs save` 的存档格式写入卡组库，之后 `hs show` / `hs image` / `hs check` 等命令可直接使用。
+
+前置条件：
+
+- Windows + 炉石客户端正在运行
+- dotnet SDK 9（`winget install Microsoft.DotNet.SDK.9`），仅构建读取器时需要
+- 补丁版 HearthMirror 源码缓存（`~/.hearthstone-cli/native/src/`；上游 HearthMirror_Decompiled 仓库源码无法直接编译，需自行修复编译错误后放到该路径，或从装好本工具的机器复制）
+
+常用命令：
+
+```bash
+# 手动导出一次（首次运行检测到读取器缺失时会自动构建）
+hs collection export
+
+# 只对比不写存档（调试用）
+hs collection export --check
+
+# 常驻监听：游戏内卡组一有变化自动同步（默认每 5 秒轮询一次）
+# 先编辑 ~/.hearthstone-cli/config.json 的 collection 节（interval 轮询秒数 / sync_delete 删除同步开关），再启动
+hs collection watch start
+hs collection watch status                              # 运行状态 + 最近同步事件
+hs collection watch stop
+
+# 编辑配置文件后 --force 重启已在运行的守护使其生效
+hs collection watch start --force
+
+# 手动构建 / 修复内存读取器
+hs collection build
+```
+
+说明：
+
+- 同步默认只增不删：游戏里删除的卡组，本地存档保留不动；在配置文件把 `sync_delete` 设为 `true` 后随游戏同步删除（仅删除此前由同步写入的存档，手动 `hs save` 导入的不受影响）
+- 同名卡组（游戏允许多槽同名）第 2 个起自动加 `-<deckId 后 4 位>` 后缀，命名稳定可复现
+- 经典 / 竞技场等非标准 / 狂野格式的卡组会被跳过并列出
+- 炉石未运行时 export 友好提示退出；watch 则静默等待，游戏开启后自动恢复同步
+- 卡组内出现卡牌库不认识的卡时整组跳过，跑 `hs update` 刷新卡牌库后再同步
+- 配置唯一入口是 `~/.hearthstone-cli/config.json`，watch 与 collection 各占一节、互不影响，CLI 不再提供配置参数（操作类 `--force` / `--check` / `--events=N` 与路径定位 `--config=路径` 除外）；watch.pid / watch.log / collection.pid / collection.log 与配置文件同目录，便于 `--config` 测试隔离。可复制仓库根目录的 `config.example.json` 起步。完整结构：
+
+```json
+{
+  "watch": {
+    "channel_id": "<Discord 频道 ID>",
+    "url": "http://127.0.0.1:8088",
+    "token": "<IM 桥接器 token>",
+    "log": "auto",
+    "mulligan_prompt": "换牌阶段提示词",
+    "turn_prompt": "我方回合提示词"
+  },
+  "collection": {
+    "interval": 5,
+    "sync_delete": false
+  }
+}
+```
+
+- 旧的 `watch_config.json` / `collection_config.json` 在首次使用时自动迁移进统一文件的对应节（旧文件保留不删）
 
 ## 标准池维护
 
