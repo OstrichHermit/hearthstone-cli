@@ -1807,7 +1807,7 @@ def _single_event_text(lookup, game, me, opp, ev):
         name = _ev_name(lookup, game, atk_id, fallback=ref if ref[:1].isalpha() else "") or "未知随从"
         tgt = _ev_target(lookup, game, me, opp, ev.get("tgt_ref"))
         # Target=0/-1 = 引擎记录的取消/无目标攻击块, 只显示攻击方, 不编造"未知目标"
-        body = f"攻击：{_cn(name)}{_fmt_stat(ev.get('atk_stat'))}"
+        body = f"攻击{_cn(name)}{_fmt_stat(ev.get('atk_stat'))}"
         if not tgt:
             return body
         body = f"{body} → {_j(tgt, _fmt_stat(ev.get('tgt_stat')))}"
@@ -1840,14 +1840,14 @@ def _single_event_text(lookup, game, me, opp, ev):
         name = _ent_disp_name(lookup, game, me, opp, eid)
         hp = ev.get("hp")
         src = _heal_src_label(lookup, game, ev)
-        head = _j(src, "治疗 ") if src else "治疗："
+        head = _j(src, "治疗 ") if src else "治疗"
         if hp:
             return _j(head, _j(name, f"血{hp[0]}→{hp[1]}"))
         return _j(head, name)
     if ev["type"] == "aura_cb":
         name = _ent_disp_name(lookup, game, me, opp, eid)
         vals = ev.get("vals")
-        return _j(_j(f"光环移除：{name}", "属性回调"), f"{vals[0]}→{vals[1]}") if vals else f"光环移除：{name}"
+        return _j(_j(f"光环移除{name}", "属性回调"), f"{vals[0]}→{vals[1]}") if vals else f"光环移除{name}"
     if ev["type"] == "armor":
         ent = game["entities"].get(eid)
         if ent and me and ent["controller"] == me["controller"]:
@@ -1877,7 +1877,7 @@ def _single_event_text(lookup, game, me, opp, ev):
     if ev["type"] == "equip":
         return f"装备武器{_cn(_ev_name(lookup, game, eid) or '未知武器')}"
     if ev["type"] == "death":
-        body = f"死亡：{_cn(_ev_name(lookup, game, eid, '未知卡牌'))}"  # 死亡体血量必归零, 攻血快照无决策价值不显示
+        body = f"死亡{_cn(_ev_name(lookup, game, eid, '未知卡牌'))}"  # 死亡体血量必归零, 攻血快照无决策价值不显示
         if ev.get("reborn"):
             rs = ev.get("reborn_stat")
             body += f"（复生，复活为 {rs[0]}/{rs[1]}）" if rs else "（复生）"
@@ -1954,7 +1954,7 @@ def _single_event_text(lookup, game, me, opp, ev):
         eids = ev.get("eids") or []
         nms = [_cn(nm) for nm in (_ev_name(lookup, game, e) for e in eids) if nm]
         if nms:
-            return "选择：" + " ／ ".join(nms) + ("" if len(nms) == len(eids) else " 等")
+            return "选择" + " ／ ".join(nms) + ("" if len(nms) == len(eids) else " 等")
         return f"选择 {len(eids)} 项"  # 选项全程未揭示 (对方发现), 只报动作
     if ev["type"] == "shuffle":
         eids = ev.get("eids") or []
@@ -2038,7 +2038,7 @@ def _event_lines(lookup, game, me, opp):
                 verb = "弃牌" if et == "discard" else "获得"
                 for nm, eid_j in items:
                     if et == "discard":
-                        lines.append((t, actor, f"{verb}：{_cn(nm)}"))
+                        lines.append((t, actor, f"{verb}{_cn(nm)}"))
                     elif opp_ctl is not None and actor == opp_ctl:
                         # 对方获得: 名字在选择类事件里已公开, 描述留给打出行 (唯一必展示点)
                         lines.append((t, actor, f"{verb}{_cn(nm)}"))
