@@ -17,9 +17,15 @@
   board   [--log=Power.log路径] [--stdin] [--player=玩家名]
                                       解析炉石客户端日志 Power.log, 输出当前对局面板 (供 AI 军师分析)
                                       默认读 %LOCALAPPDATA%\\Blizzard\\Hearthstone\\Logs\\Power.log, --stdin 从管道读
-  watch   start [--channel=ID] [--url=URL] [--token=TOKEN] [--log=路径] [--force]
-                                      启动军师监听守护进程 (tail Power.log, 换牌/我方回合时 POST 提示词到 IM 桥接器)
+  watch   start [--config=路径] [--force]
+                                      启动军师监听守护进程 (tail Power.log, 换牌/我方回合时 POST 提示词到 IM 桥接器;
+                                      配置在 ~/.hearthstone-cli/config.json 的 watch 节, 编辑文件后 start 生效)
           stop / status               停止监听 / 查看状态与最近触发事件 (status 可加 --events=N)
+  collection export [--check]          从运行中的游戏内存导出收藏卡组到卡组库 (仅 Windows, --check 只对比不写)
+  collection build                     构建 DeckExport 内存读取器 (需 dotnet SDK 9)
+  collection watch start [--config=路径] [--force] / stop / status
+                                      常驻监听游戏收藏卡组变化, 自动同步到卡组库 (仅 Windows;
+                                      配置在 config.json 的 collection 节, 改配置后 --force 重启生效)
 
 deck.json 格式:
   {
@@ -120,6 +126,21 @@ def load_full_db():
     return {c.get("id"): {"name": c.get("name") or "", "text": c.get("text") or "",
                           "cost": c.get("cost"), "cardClass": c.get("cardClass") or ""}
             for c in raw if c.get("id")}
+
+
+def merged_lookup():
+    """dbfId -> 完整卡牌 dict: 收集库为主, 全量库补非收集卡 (圣者麦迪文的圣杖埃提耶什等机制附带卡)。
+
+    供 decode/save/image 的名字显示与 check 的附带卡识别; 缺全量库时退化为纯收集库。"""
+    lookup = {c["dbfId"]: c for c in load_db()}
+    if DB_FULL_PATH.exists():
+        try:
+            for c in json.loads(DB_FULL_PATH.read_text(encoding="utf-8")):
+                if c.get("dbfId") is not None:
+                    lookup.setdefault(c["dbfId"], c)
+        except Exception:
+            pass
+    return lookup
 
 
 def playable(db):
@@ -322,8 +343,7 @@ def fetch_code_from_url(url):
 
 
 def cmd_decode(code):
-    db = load_db()
-    lookup = {c["dbfId"]: c for c in db}
+    lookup = merged_lookup()
     fmt, heroes, cards, sb, extra_note = parse_deck_code(code, lookup)
     fmt_name = {1: "狂野", 2: "标准", 3: "经典"}.get(fmt, str(fmt))
     print(f"format={fmt_name} hero_count={len(heroes)} main={sum(c for _, c in cards)}张 sideboard={sum(c for _, c, _ in sb)}张{extra_note}")
@@ -364,6 +384,27 @@ def check_spec(spec):
             errors.append(f"[{card} x{cnt}] {msg}")
         else:
             resolved.append((card, cnt))
+
+    # 机制附带卡降级: 收集库没有但全量库有的卡 (如圣者麦迪文配套的圣杖埃提耶什/圣地卡拉赞)
+    # 是合法构筑的一部分, 从错误降级为警告, 并计入 resolved 参与后续数量/职业/标准池校验
+    warnings = []
+    full_lookup = {}
+    if DB_FULL_PATH.exists():
+        try:
+            full_lookup = {c["dbfId"]: c for c in json.loads(DB_FULL_PATH.read_text(encoding="utf-8"))
+                           if c.get("dbfId") is not None}
+        except Exception:
+            pass
+    keep = []
+    for e in errors:
+        m = re.fullmatch(r"\[#(\d+) x(\d+)\] dbfId \1 不存在", e)
+        extra = full_lookup.get(int(m.group(1))) if m else None
+        if extra:
+            resolved.append((extra, int(m.group(2))))
+            warnings.append(f"{extra['name']} 为机制附带卡 (非收集卡, #{extra['dbfId']}), 已按合法卡计入")
+        else:
+            keep.append(e)
+    errors = keep
 
     sb_owner = None
     sb_resolved = []
@@ -453,7 +494,7 @@ def check_spec(spec):
 
     sb_total = sum(c for _, c in sb_resolved)
     return {
-        "errors": errors, "resolved": resolved, "sb_resolved": sb_resolved,
+        "errors": errors, "warnings": warnings, "resolved": resolved, "sb_resolved": sb_resolved,
         "sb_owner": sb_owner, "sb_total": sb_total, "hero": hero,
         "hero_cls": hero_cls, "fmt": fmt, "fmt_num": fmt_num, "total": total,
         "spec": spec,
@@ -461,6 +502,8 @@ def check_spec(spec):
 
 
 def print_check_result(r, exit_on_fail=True):
+    for w in r.get("warnings", []):
+        print(f"  ~ {w}")
     if r["errors"]:
         print("校验失败:")
         for e in r["errors"]:
@@ -515,8 +558,7 @@ def cmd_save(name, src, note=""):
         code = codes[0]
         if len(codes) > 1:
             print(f"页面发现 {len(codes)} 段代码, 取第一段")
-    db = load_db()
-    lookup = {c["dbfId"]: c for c in db}
+    lookup = merged_lookup()
     fmt, heroes, cards, sb, _ = parse_deck_code(code, lookup)
     hero = lookup.get(heroes[0], {}) if heroes else {}
     fmt_name = {1: "wild", 2: "standard"}.get(fmt, "wild")
@@ -595,6 +637,8 @@ def cmd_check(name=None):
         all_ok = all_ok and ok
         head = f"{a['name']} ({a['format']} {a['hero']}): " + ("通过" if ok else "存在问题")
         print(head)
+        for w in r.get("warnings", []):
+            print("  ~ " + w)
         if not ok:
             for e in r["errors"]:
                 print("  - " + e)
@@ -689,10 +733,11 @@ def build_image_html(deck, lang):
     icon = CLASS_ICONS.get(deck["class_en"], "⚔️")
 
     def row(r):
-        c = RAR[r["rarity"]]["c"]
+        rar = r["rarity"] if r["rarity"] in RAR else "COMMON"  # 机制附带卡等无稀有度卡按普通卡配色
+        c = RAR[rar]["c"]
         typ = r["type_zh"] if lang == "zh" else r["type_en"]
         nm = r["name"] if lang == "zh" else r["name_en"]
-        tail = f"{c}e0" if r["rarity"] in ("COMMON", "FREE") else f"{c}a8"
+        tail = f"{c}e0" if rar in ("COMMON", "FREE") else f"{c}a8"
         bg = (f"background:linear-gradient(90deg, {c}00 0%, {c}00 48%, {c}30 66%, {c}80 85%, {tail} 100%),"
               "linear-gradient(90deg, rgba(253,243,216,.9), rgba(253,243,216,.9));"
               'box-shadow:0 1px 3px rgba(90,70,40,.18);')
@@ -817,7 +862,7 @@ def cmd_image(src, lang="zh", name=None, name_en=None, out=None, force=False, me
     else:
         arch_name = src
         code = load_archive(src)[0]["code"]
-    lookup_zh = {c["dbfId"]: c for c in load_db()}
+    lookup_zh = merged_lookup()  # 含全量库兜底: 机制附带卡 (麦迪文的圣杖等) 正常显示且不误拦标准池
     lookup_en = {c["dbfId"]: c for c in load_db_en()}
     fmt, heroes, cards, sb, _ = parse_deck_code(code, lookup_zh)
 
@@ -947,6 +992,9 @@ def main():
     elif cmd == "watch":
         from hearthstone_cli.watch_worker import cmd_watch
         cmd_watch(rest)
+    elif cmd == "collection":
+        from hearthstone_cli import collection
+        collection.cmd_collection(rest)
     elif cmd == "filter":
         kv = {}
         for a in rest:
