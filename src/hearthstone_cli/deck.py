@@ -71,7 +71,6 @@ IMAGES_DIR = BASE / "image"
 CARD_TYPES = {"MINION", "SPELL", "WEAPON", "LOCATION", "HERO"}
 
 # 标准池白名单 (迅猛龙年2025.4起): 2027年春退环境
-# 10.21 上线"黑暗帝国"后需新增对应 set 代码
 STANDARD_SETS = {
     "CORE",                    # 核心系列 (轮换子集)
     "EMERALD_DREAM",           # 翡翠梦境 2025
@@ -79,7 +78,7 @@ STANDARD_SETS = {
     "TIME_TRAVEL",             # 穿越时间流 2026上半年
     "CATACLYSM",               # 大地的裂变 2026上半年
     "ESCAPEFROM_VIOLET_HOLD",  # 逃离紫罗兰监狱 2026下半年
-    "BE",                      # 黑帝国古神系列 2026.9 (克苏恩/纯净圣母等4张传说)
+    "BE",                      # 黑暗帝国的统治 2026.10.21 (预发布4传说+正片135张)
 }
 
 # 特殊构筑规则卡 dbfId
