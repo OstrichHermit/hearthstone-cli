@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hearthstone-cli"
-version = "0.2.0"
+version = "0.2.1"
 description = "Hearthstone toolbox for AI agents — deck building (validate, encode, filter, deck images, collection sync from game memory) and match analysis (board parsing from game logs, action replay, AI advisor watcher)"
 readme = "README.md"
 requires-python = ">=3.10"
