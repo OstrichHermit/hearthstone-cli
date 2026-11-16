@@ -92,6 +92,10 @@ hs board
 hs board --log=D:\games\Hearthstone\Logs\Power.log   # explicit log path (a dir also works: auto-discover)
 hs board --player=鸵鸟居士                            # pin your player name if auto-detect is unsure
 
+# If the log lives outside the standard locations (e.g. installed on another drive), set an env var
+# and both `hs board` / `hs watch` will auto-discover it:
+#   setx HS_LOG_DIR "I:\Hearthstone\Logs"   # point at the Logs dir; Hearthstone_* subdirs are scanned
+
 # Advisor watcher: POST a prompt to the IM bridge on mulligan / your turns to trigger AI analysis
 # Edit the watch section of ~/.hearthstone-cli/config.json first (channel_id/url/token, ...), then start
 hs watch start                                       # after filling the watch section in config.json

@@ -40,7 +40,8 @@ USAGE = """用法: hs watch start [--config=路径] [--force]
 
 配置: 编辑 ~/.hearthstone-cli/config.json 的 watch 节
       (channel_id/url/token/log/mulligan_prompt/turn_prompt), 编辑后 start 生效。
---log 支持三种: "auto"(默认, 自动发现最新 Hearthstone_*/Power.log)、日志目录、具体 Power.log 文件路径。
+--log 支持三种: "auto"(默认, 自动发现最新 Hearthstone_*/Power.log)、日志目录、具体 Power.log 文件路径;
+      auto 模式扫描候选目录 (HS_LOG_DIR 环境变量优先, 其余见 board 报错提示), 日志不在标准位置时设 HS_LOG_DIR 即可。
 监听炉石 Power.log, 检测到换牌阶段/轮到我方回合时向 IM 桥接器 POST 提示词触发军师分析。
 token 也可用环境变量 HS_WATCH_TOKEN; 同目录生成 watch.log(运行日志) 与 watch.pid。"""
 

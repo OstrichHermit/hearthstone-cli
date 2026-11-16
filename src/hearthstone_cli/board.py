@@ -1,8 +1,9 @@
 """hs board — 解析炉石客户端日志 Power.log, 输出当前对局面板 (供 AI 军师读取)
 
 用法:
-  hs board                          读默认日志 (%LOCALAPPDATA%\\Blizzard\\Hearthstone\\Logs\\Power.log)
-  hs board --log=D:\\path\\Power.log  指定日志路径
+  hs board                          自动发现最新日志 (Logs 下直接存在或 Hearthstone_<时间戳> 子目录, 取最新)
+  hs board --log=D:\\path\\Power.log  指定日志文件
+  hs board --log=D:\\path\\Logs       指定日志目录 (自动发现其中最新)
   hs board --stdin                  从 stdin 读日志 (方便测试)
   hs board --player=鸵鸟居士         手动指定我方玩家名 (默认自动判定)
   hs board --turns=N                行动回顾带最近 N 个回合 (默认 3, N=0 完全不输出)
@@ -18,15 +19,20 @@ import re
 import sys
 from pathlib import Path
 
-DEFAULT_LOG = (Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-               / "Blizzard" / "Hearthstone" / "Logs" / "Power.log")
-# 日志根目录候选: 本机炉石把日志写在安装目录下(每次启动生成 Hearthstone_<时间戳> 子目录),
-# 标准位置 %LOCALAPPDATA%\Blizzard\Hearthstone\Logs 作为兜底
-DEFAULT_LOG_DIRS = [
+def _localappdata():
+    return Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+
+
+DEFAULT_LOG = _localappdata() / "Blizzard" / "Hearthstone" / "Logs" / "Power.log"
+# 日志根目录候选 (按序扫描, 取最新): HS_LOG_DIR 环境变量 (日志不在标准位置时配置,
+# 如 I:\暴雪\Hearthstone\Logs), E:\Hearthstone\Logs, 标准位置 %LOCALAPPDATA%\Blizzard\Hearthstone\Logs。
+# 炉石每次启动会在 Logs 下生成 Hearthstone_<时间戳> 子目录, find_latest_power 会自动进入子目录找 Power.log
+_HS_LOG_DIR = os.environ.get("HS_LOG_DIR", "").strip()
+DEFAULT_LOG_DIRS = [d for d in [
+    Path(_HS_LOG_DIR).expanduser() if _HS_LOG_DIR else None,
     Path(r"E:\Hearthstone\Logs"),
-    (Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-     / "Blizzard" / "Hearthstone" / "Logs"),
-]
+    _localappdata() / "Blizzard" / "Hearthstone" / "Logs",
+] if d is not None]
 
 
 def find_latest_power(base_dir=None):
@@ -2306,10 +2312,15 @@ def cmd_board(args):
     if use_stdin:
         lines = sys.stdin.buffer.read().decode("utf-8", "replace").splitlines()
     else:
-        p = Path(log_path) if log_path else find_latest_power()
+        p = Path(log_path).expanduser() if log_path else None
+        if p is not None and p.is_dir():  # --log 指向日志目录: 在其中自动发现最新 Power.log
+            p = find_latest_power(p)
+        elif p is None:
+            p = find_latest_power()
         if not p or not p.is_file():
             sys.exit(f"未找到 Power.log (已扫描候选目录: {'; '.join(str(d) for d in DEFAULT_LOG_DIRS)})"
-                     f"\n可用 --log=路径 指定, 或 --stdin 从管道读入")
+                     f"\n日志不在标准位置时可设环境变量 HS_LOG_DIR 指向日志目录 (如 I:\\暴雪\\Hearthstone\\Logs),"
+                     f" 或 --log=路径/目录 指定, 或 --stdin 从管道读入")
         lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
 
     game, start_line, total = parse_power_log(lines)

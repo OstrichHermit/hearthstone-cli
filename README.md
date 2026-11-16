@@ -92,6 +92,9 @@ hs board
 hs board --log=D:\games\Hearthstone\Logs\Power.log   # 指定日志路径（也可指向日志目录自动发现）
 hs board --player=鸵鸟居士                            # 自动判定我方不准时手动指定
 
+# 日志不在标准位置时（如安装在其他盘），设环境变量后 hs board / hs watch 均自动发现：
+#   setx HS_LOG_DIR "I:\暴雪\Hearthstone\Logs"          # 指向 Logs 目录即可，自动进入 Hearthstone_* 子目录取最新
+
 # 军师监听：换牌阶段/轮到我方回合时，向 IM 桥接器 POST 提示词触发 AI 分析
 # 先编辑 ~/.hearthstone-cli/config.json 配好 watch 节（channel_id/url/token 等），再启动
 hs watch start                                       # 配置好 config.json 的 watch 节后启动

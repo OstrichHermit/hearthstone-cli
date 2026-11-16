@@ -14,9 +14,11 @@
                                       生成卡组长图 PNG (本地 Chrome/Edge 无头渲染)
                                       标准卡组含非标准池卡时拦截不出图 (--force 强制渲染)
                                       默认同名卡不合并逐张列出, --merge 则合并同名卡
-  board   [--log=Power.log路径] [--stdin] [--player=玩家名]
+  board   [--log=Power.log路径或日志目录] [--stdin] [--player=玩家名]
                                       解析炉石客户端日志 Power.log, 输出当前对局面板 (供 AI 军师分析)
-                                      默认读 %LOCALAPPDATA%\\Blizzard\\Hearthstone\\Logs\\Power.log, --stdin 从管道读
+                                      默认自动发现最新日志 (候选目录见 --log 缺省报错提示, 支持
+                                      Hearthstone_<时间戳> 子目录; 日志不在标准位置可设环境变量 HS_LOG_DIR),
+                                      --log 可指定文件或目录, --stdin 从管道读
   watch   start [--config=路径] [--force]
                                       启动军师监听守护进程 (tail Power.log, 换牌/我方回合时 POST 提示词到 IM 桥接器;
                                       配置在 ~/.hearthstone-cli/config.json 的 watch 节, 编辑文件后 start 生效)
